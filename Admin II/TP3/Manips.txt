@@ -1,0 +1,258 @@
+FAdvkyn8aJ4
+
+ETAPE 1 : se connecter à son vps _____________________________________________________________________________________________________________________________________________________________________________________________________________
+
+putty : mettre l'addresse ip dans le champ correspondant, séléctionner ssh et mettre le bon port et let's go 
+vps : entrer le bon login et le bon mot de passe et on y est 
+
+ETAPE 2 : changer le mot de passe _________________________________________________________________________________________________________________________________________________________________________________________________________
+
+vps :
+debian@vps-15225ca6:~$ passwd
+Changing password for debian.
+Current password: ************** 
+New password: ************
+Retype new password: ************   
+passwd: password updated successfully
+
+woohooo c'est bon pour moi (squeezie) 
+
+ETAPE 3 : changer le port ssh pour la connexion ________________________________________________________________________________________________________________________________________________________________________________________
+
+vps : 
+debian@vps-15225ca6:~$ sudo vi /etc/ssh/sshd_config
+
+
+aller modifier la ligne port et changer le port 22 pour un port compris entre 49152 et 65535
+
+mode insertion : i 
+pour engregistrer et quitter : échap, :x , entrée 
+
+debian@vps-15225ca6:~$ sudo systemctl restart sshd
+
+ETAPE 4 : sécuriser son vps pour éviter les ptits hackeurs de moooort ________________________________________________________________________________________________________________________________________________________________________
+
+- mettre à jour le système d'exploitation  : 
+
+debian@vps-15225ca6:~$ sudo apt update (met à jour la liste des paquets)
+debian@vps-15225ca6:~$ sudo apt upgrade (met à jour les paquets à proprement parler)
+
+- créer un nouvel utilisateur avec des droits restreints : 
+
+debian@vps-15225ca6:~$ sudo adduser lilian                   (nouvel utilisateur)
+New password: **************                                (le même que pour entrer dans le vps)
+Retype new password: *************
+passwd: password updated successfully
+Changing the user information for lilian
+Enter the new value, or press ENTER for the default             (facultatif)
+        Full Name []:
+        Room Number []:
+        Work Phone []:
+        Home Phone []:
+        Other []:
+Is the information correct? [Y/n] y
+
+- ajouter l'utilisateur dans le groupe docker 
+
+debian@vps-15225ca6:~$ sudo usermod -aG docker lilian
+debian@vps-15225ca6:~$ sudo usermod -aG sudo lilian
+debian@vps-15225ca6:~$ getent (affiche les groupes et leurs utilisateurs)
+debian@vps-15225ca6:~$ groups username (affiche les groupes au quel l'utilisateur appartient)
+
+
+- vérifier que l'utilisateur lilian peut se connecter en ssh 
+
+C:\Users\Lilian> ssh -p 51195 lilian@54.37.12.55 (dans le powershell) z,#q2F/B=K8TXHy
+
+
+!!! je ne comprend pas vraiment pourquoi on demande de créer un utilisateur avec 
+un accès restreint et de couper la connexion ssh à l'utilisateur root, ça veut dire qu'on ne pourra
+plus faire les commandes qu'on nous demande de faire dans la suite de tp !!! 
+
+ducoup je l'ai quand même ajouté au groupe sudo pour lui donner des droits admin 
+ça y est j'ai compris, l'utilisateur debian n'est pas un utilisateur root, donc on ne 
+retire rien à lui 
+
+
+
+- désactiver l'accès ssh pour l'utilisateur root 
+
+debian@vps-15225ca6:~$ sudo vi /etc/ssh/sshd_config
+
+ajouter la ligne : PermitRootLogin no
+
+debian@vps-15225ca6:~$ sudo systemctl restart sshd
+
+
+- configurer le pare-feu sous linux avec UFW 
+
+debian@vps-15225ca6:~$ sudo apt install ufw 
+debian@vps-15225ca6:~$ sudo ufw allow 51195/tcp (autorise le traffic ssh)
+debian@vps-15225ca6:~$ sudo ufw allow 53/tcp (autorise le traffic dns)
+debian@vps-15225ca6:~$ sudo ufw allow 53/udp (autorise le traffic dns)
+
+- activer UFW 
+
+sudo ufw enable 
+
+- vérifier le status du pare feu 
+
+sudo ufw status verbose 
+
+- éxecuter un scan de ports TCP pour vérifier s'il n'y a pas de ports accessibles inutilement 
+
+sudo apt install nmap
+nmap -p 1-65535 localhost
+
+- regarder les services qui tournent 
+
+sudo apt install net-tools
+netstat -tulnp
+
+- Installer Fail2ban 
+
+sudo apt install fail2ban 
+
+- créer un fichier de configuration local de vos services en copiant le fichier "jail"
+
+sudo cp /etc/fail2ban/jail.conf /etc/fail2ban/jail.local
+
+- Ouvrir le fichier avec un éditeur de texte
+
+sudo vi /etc/fail2ban/jail.local
+
+trouver la section [sshd] et ajouter ou modifier pour que ça ressemble à ça :
+
+[sshd]
+enabled = true
+port = 51195
+filter = sshd
+maxretry = 3
+findtime = 5m
+bantime  = 30m
+
+Dans cet exemple, si une tentative de connexion SSH échoue trois fois en 
+cinq minutes, la période d’interdiction des IP sera de 30 minutes.
+
+- redémmarrez le service pour s'assurer qu'il s'éxecute 
+
+sudo service fail2ban restart
+
+- Après avoir configuré Fail2Ban, on peut vérifier son statut et 
+s'assurer qu'il surveille bien le service SSH avec : 
+
+sudo fail2ban-client status sshd
+
+j'ai essayé et je suis officiellement banni pdt 30 minutes, c'est une bonne excuse pour aller dodo mtn 
+
+
+2. Mise en place de l'authentification SSH par clé ________________________________________________________________________________________________________________________________________________________________________
+
+- Créer une paire de clés SSH avec putty 
+
+Ouvrir PuTTYgen 
+séléctionner les bonnes options câd : RSA / 4096 bits 
+appuyer sur "Generate" 
+
+Bouger la souris comme un zinzinou dans la ptite fenêtre
+
+C'est bon, la clé est ready 
+
+remplir la Key passphrase 
+
+sauvegarder la clé privée dans un fichier spécifique et copier la clé publique dans un presse papier 
+
+
+- copier la clé publique dans le fiak du serveur 
+
+on va se connecter au vps noooormal 
+
+puis se rendre dans le dossier .sshd
+debian@vps-15225ca6:~$ cd .sshd 
+
+
+et copier le contenu de la clé publique dans le fichier authorized_keys 
+debian@vps-15225ca6:~/.ssh$ echo "tout le charabia de la clé publique" >> authorized_keys
+
+- configurer la session de connexion sur puTTY 
+
+importer la clé privée dans connection/SSH/Auth/Credentials => private key file for atuhentification
+aller dans connection/Data => Auto-login username et mettre l'utilisateur
+aller dans session => Host Name (remplir avec l'ip du serv) et port (port ssh du serv)
+rester dans session et remplir Saved session avec un nom de session puis appuyer sur save 
+
+tada c'est bon 
+il faut le refaire pour tout les utilisateurs et sur toutes les machines => cheh
+
+
+- désactiver l'authentification par mot de passe 
+
+retourner dans le fichier /etc/ssh/sshd_config 
+
+et modifier la ligne comme ça : 
+PasswordAuthentification no 
+
+puis :
+
+sudo systemctl restart sshd
+
+et normalement on est bon lets goooooooooooooooo
+
+
+3. Prise en main du vps ________________________________________________________________________________________________________________________________________________________________________
+
+à partir de mtn on va se connecter avec lilian pour éviter les bêtises 
+
+Vérifier que docker fonctionne bien sur le vps en : 
+ 
+- tapant la commande : docker --version
+- reprenant l'exemple de "hello world" :
+
+docker run hello-world 
+
+______________________
+
+- hébérger un site web statique sur le vps et y accéder via une machine externe 
+
+créer la ptite page web => index.html (dans le vps : )
+écrire le dockerfile = Dockefile (Dans le vps : )
+
+dans le vps : 
+après avoir copié les fichiers lancer les différentes commandes docker 
+(je suis certain que ça va pas marcher du premier coup, j'ai des doutes sur mon dockerfile et 
+aussi le pare feu et pas configuré pour laisser passer le traffic web) : 
+donc je vais modifier le pare feu pour laisser passer le traffic http et https 
+
+sudo ufw allow 80/tcp (http)
+sudo ufw allow 443/tcp (https)
+sudo ufw status
+(normalement ça c'est good)
+
+docker build -t monsite .
+docker run --name=mon-site-web -p 80:80 monsite
+
+ok ça part je test, ça marche ap 
+
+je réessaie mais en retirant une ligne de mon Dockerfile : RUN rm /etc/nginx/conf.d/default.conf 
+je supprime mon image et mon conteneur et on recommence 
+
+docker stop mon-site-web
+docker rm mon-site-web 
+
+docker rmi monsite
+on modifie le Dockerfile dans le vps 
+
+et on recommence (build l'image plus relancer le conteneur)
+
+je retest => http://54.37.12.55
+ça a marchéééééééééééééé ouiiiiiiiii ptn de merde 
+
+j'ai envie de voir si je peux aussi faire avec https et si ça marche pas tantpis
+
+donc je vais juste changer une commande 
+
+docker run --name=mon-site-web-2 -p 443:80 monsite
+
+ça marche pas, tantpis, on verra ça plustard 
+
+

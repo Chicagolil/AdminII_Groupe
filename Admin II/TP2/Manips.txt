@@ -1,0 +1,362 @@
+TP2 : Suite de la découverte de Docker 
+
+Obj du labo : 
+- enrichir les interactions des containers avec l'éxtérieur via le partage de données et la mise en réseau  
+- connaître la différence entre les différents types de volumes pour le partage de données et pouvoir les mettre en oeuvre 
+- comprendre et réaliser la mise en réseau de containers docker : communication entre containers, avec l'hôte, avec l'éxterieur 
+- définir un fichier docker-compose décrivant  une infrastructure de containers et ses paramètres
+
+Préparation : créer une image avec tous les outils dont on aura besoin en créant un dockerfile 
+
+- aller voir la config dans le Dockerfile 
+
+- docker build -t custom-nginx . 
+
+normalement c'est bon mais on peut tester en lancant un container (serveur + ligne de commande )
+avec cette image pour voir si le serveur tourne bien et que les outils en ligne de commande on bien été installés  
+ 
+- docker run --name=test -p 80:80 custom-nginx (le serveur fonctionne : localhost:80 )
+- docker exec -it test /bin/bash :
+    - nano /usr/share/nginx/html/index.html (éditeur de texte : ça fonctionne)
+    - ip addr                               (intérfaces réseau : ça fonctionne)
+    - ip route                              (intérfaces réseau : ça fonctionne)
+    - ping -c 4 google.com                  (connectivité internet : ça fonctionne)
+    - ifconfig                              (configurations intérfaces réseau : ça fonctionne)
+    - netstat -ant                          (connexions réseau actives : ça fontionne)
+    - netstat -rn                           (afficher tables de routage : ça fonctionne)
+    - exit 
+
+
+stopper le container pour libérer les ports et supprimer le container pusiqu'il ne va plus servir
+
+- docker stop test 
+
+1. Les Volumes Docker___________________________________________________________________________________________________________________________
+
+on voit venir un ptit problème avec les containers , une de ses forces, c'est la volatilité de ses containers 
+on peut facilement les arrêter, les supprimer, les redémarrer 
+mais ducoup les données à l'intérieur de ses container sont pas persistées et peuvent être perdues facilement 
+
+Mais comme d'habitude à chaque problème est collé une solution :
+On va pouvoir utiliser deux mécanisme de Docker pour persister ses données : 
+- les Bind Mounts 
+- les volumes docker 
+
+1.1 Les Bind Mounts _____________________________________________________________________________________________________________________________
+
+On va pouvoir éditer dynamiquement le site web grâce aux bind mounts 
+
+Pour ce faire on va créer un nouveau répertoire html sur mon répertoire local (à l'éxterieur du container) 
+qui contient un fichier index.html avec du contenu quelconque 
+
+Ensuite voici la commande à taper : 
+- docker run -p 80:80 \ 
+            --name web \ 
+            --mount type=bind,source="$(pwd)"/html,target=/usr/share/nginx/html/ \ 
+            custom-nginx
+
+on revient en détail sur cette commande et ses différents paramètres:
+docker run : 
+    Cette commande est utilisée pour créer et démarrer un conteneur Docker à partir d'une 
+    image spécifiée
+
+-p 80:80 : 
+    L'option -p permet de publier un port du conteneur vers un port de la machine hôte.
+    Ici, cela signifie que le port 80 du conteneur (le port standard pour le trafic HTTP) 
+    sera accessible via le port 80 de ma machine hôte. 
+    Cela permet d'accéder au serveur web Nginx 
+
+--name web : 
+    Cette option attribue un nom (web) au conteneur. 
+
+--mount type=bind,source="$(pwd)"/html,target=/usr/share/nginx/html/ :
+    --mount : 
+        C'est l'option utilisée pour monter un volume ou un répertoire de l'hôte dans le conteneur.
+    type=bind : 
+        Spécifie que le type de montage est un Bind Mount, 
+        ce qui signifie qu'on monte un répertoire de mon système hôte directement dans le système de fichiers du conteneur  
+    source="$(pwd)"/html : (ça marche aussi si je mets le chemin e)
+        Définit le chemin source du Bind Mount sur ma machine hôte. $(pwd) est remplacé par le chemin absolu 
+        du répertoire courant de mon terminal, et /html est le sous-répertoire que je monte.
+    target=/usr/share/nginx/html/ : 
+        Spécifie le chemin cible dans le système de fichiers du conteneur où le répertoire source sera monté. 
+        Pour Nginx, ce répertoire est l'emplacement par défaut pour servir le contenu web.
+
+custom-nginx : C'est le nom de l'image Docker à partir de laquelle le conteneur sera créé
+
+!! Petite précision, $(pwd) est fait pour fonctionner dans un shell git bash et pas un powershell windows 
+donc il faut le modifier un peu pour que ça fonctionne sur windows en mettant le chemin absolu ou en utilisant des 
+commandes spécifiques à powershell comme $(Get-Location)/html !!
+
+on va voir si ça fonctionne : 
+
+-localhost:80 (ça fonctionne le serveur tourne) 
+
+essayer de modifier le fichier ./html/index.html pour voir les modifications dynamiques
+(ça fonctionne, il faut juste recharger la page web)
+
+on peut aussi aller dans le conteneur et dans le répertoire /usr/share/nginx/html/ pour aller modifier 
+le fichier index.html avec nano et voir que ça le modifie et dans la page et dans mon vsCode dans ./html/index.html
+
+
+
+Note : si vous utilisez les Bind Mount pour éditer des fichiers de configuration, n’oubliez pas qu’il faut 
+redémarrer le service correspondant pour que la modification de config soit prise en compte.
+
+Dans le contexte de Nginx, par exemple, si on modifie sa configuration 
+(disons nginx.conf ou des fichiers dans /etc/nginx/sites-available/), Nginx ne détectera pas automatiquement ces changements. 
+On devra exécuter une commande pour recharger la configuration, comme :
+
+docker exec web nginx -s reload
+
+Ce qui n'est pas le cas pour des pages html par exemple, Nginx sert le contenu à la volée sans avoir 
+besoin de recharger ou de redémarrer le service après la modification de ces fichiers 
+
+docker stop web 
+
+
+1.2 Volume Docker _____________________________________________________________________________________________________________________________
+
+
+Un Volume Docker est un répertoire de l’hôte placé sous contrôle de Docker. Il n’est pas destiné 
+à être atteint depuis l’hôte lui-même, mais uniquement depuis un ou plusieurs containers.
+Les Volumes Docker, qui sont des espaces de stockage gérés par Docker 
+et prévu pour un partage de données entre containers
+
+On va relancer la même commande mais cette fois ci en utilisant un volume 
+
+docker run  -p 80:80 \
+			--name web-volume \
+			--mount source=mon-volume,target=/usr/share/nginx/html/ \
+			custom-nginx
+
+on revient en détail sur cette commande et ses différents paramètres:
+
+quasi rien ne change à part cette ligne : 
+
+--mount source=mon-volume,target=/usr/share/nginx/html/ :
+    Montage d'un volume dans le conteneur 
+
+    source=mon-volume : 
+        Spécifie le nom du volume Docker à utiliser ou à créer. Si un volume nommé mon-volume 
+        existe déjà, il sera utilisé ; sinon, Docker créera un nouveau volume avec ce nom
+    
+    target=/usr/share/nginx/html/ : 
+        Définit le chemin cible dans le conteneur où le volume sera monté. 
+        Pour un serveur Nginx, /usr/share/nginx/html/ est le répertoire par défaut pour servir 
+        des fichiers statiques. En montant un volume à cet emplacement, on peut rendre 
+        persistants les fichiers ou les sites web servis par Nginx, 
+        permettant une persistance des données indépendante du cycle de vie du conteneur.
+
+
+Le conteneur utilise un volume Docker nommé mon-volume pour persister le contenu du répertoire /usr/share/nginx/html/, ce qui est particulièrement 
+utile pour conserver des fichiers web entre les redémarrages ou les mises à jour du conteneur.
+
+Observer que ce volume a bien été crée : 
+
+docker volume inspect mon-volume (erreur dans le tp, le nom du volume est faux, la prof a mis le nom du container et non du volume, j'ai mis 20 min à m'en rendre compte)
+
+ici le volume a été crée automatiquement au moment de l'éxécution de la commande docker run ... 
+mais on peut aussi le créer au préalable en utilisant docker volume create <nom du container> 
+
+On peut aller modifier le contenu de la page pour voir si on observe bien le changement sur la page
+
+docker exec -it web-volume /bin/bash 
+cd usr/share/nginx/html 
+nano index.html
+
+Donc comme on a dit, ces volumes sont fait pour transférer des données entre les container 
+donc on va créer un autre container qui utilise le même volume :  
+
+docker run --name=web-volume-2 -p 81:80 --mount source=mon-volume,target=/usr/share/nginx/html/ custom-nginx
+
+
+ça fonctionne, on a bien la même page sur les deux serveurs hassoul 
+
+ptite pause jvais manger j'ai faim 
+
+2. Les Réseaux Docker _____________________________________________________________________________________________________________________________
+
+2.1 Réseau par défaut _____________________________________________________________________________________________________________________________
+
+On va aller voir les intérfaces réseau de chaque container 
+ 
+soit depuis l'éxterieur du conteneur avec 
+
+docker inspect web-volume 
+docker inspect web-volume-2 
+
+soit depuis l'interieur du conteneur avec 
+
+docker exec -it web-volume /bin/bash
+ifconfig
+
+docker exec -it web-volume-2 /bin/bash
+ifconfig
+
+addr ip web-volume : 172.17.0.2 
+addr ip web-volume-2 : 172.17.0.3
+
+Les containers peuvent-ils se joindre via ping ?
+
+Oui les deux container peuvent se ping les coquins 
+
+Les containers ont-ils accès à Internet ?
+
+Oui je peux aussi ping google
+
+Par défaut, les containers appartiennent tous au réseau par défaut appelé bridge. 
+Ce réseau par défaut est, comme son nom l’indique, de type “bridge”. Ils peuvent donc communiquer 
+directement les uns avec les autres, ce qui n’est pas toujours souhaitable.
+
+2.2 Réseaux définis par l'utilisateur _______________________________________________________________________________________________________________
+
+On peut en tant qu'utilisateur, créer nos propres réseaux avec 
+
+docker network create my-net (my-net est le nom qu'on lui donne)
+
+et vérifier qu'ils existent bien avec 
+
+docker network ls (il existe, cool)
+
+et trouver le subnet IP ce ce résau avec 
+
+docker network inspect my-net 
+
+ici en l'occurence le subnet c'est 172.18.0.0 255.255.0.0, on voit donc 
+qu'il est différent du subnet des deux autres conteneurs plus haut ou c'était 172.17.0.0 255.255.0.0
+
+
+
+on va venir encooooooooore démarrer un nouveau conteneur et le mettre dans ce réseau là avec 
+
+docker run -p 82:80 --net=my-net --name=web-my-net custom-nginx
+
+Ce nouveau container peut-il contacter les deux précédents? A-t-il accès à Internet? 
+
+docker exec -it web-my-net /bin/bash
+ping google.com (ça fonctionne)
+ping 172.17.0.2  ( ça fonctionne pas et tant mieux)
+ping 172.17.0.3  ( ça fonctionne pas et tant mieux)
+
+Ici on voit que le conteneur a toujours accès à internet mais il n'a plus accès aux deux autres 
+conteneurs ce qui est normal puisqu'il n'est pas sur le même réseau 
+
+Et si on remet un autre nouveau conteneur sur le même réseau que web-my-net, est-ce-que il peuvent se joindre? 
+Voyons ça : 
+
+docker exec -it web-my-net /bin/bash
+ifconfig (ip : 172.18.0.2)
+
+docker run --net=my-net --name=web-my-net-2 custom-nginx
+docker exec -it web-my-net-2 /bin/bash
+ping 172.18.0.2
+
+ça fonctionne c'est merveilleux 
+Petite remarque, sur les réseaux définis par l'utilisateur, on a une résolution de nom DNS 
+ce qui n'est pas le cas sur le réseau par défaut, on peut donc faire :
+
+ping web-my-net (ça fonctionne)
+
+on peut si on le souhaite avoir plus de contrôle sur la création des réseaux , par exemple 
+
+docker network create --subnet=10.10.10.0/24 custom-network (crée un réseau avec un subnet qu'on choisit)
+
+docker run --net custom-network --name web-my-net --ip "10.10.10.10" custom-nginx (on choisit l'addresse ip du conteneur dans le subnet qu'on a crée juste avant)
+
+3. Docker Compose ________________________________________________________________________________________________________________________________________________
+
+Tout ce qu'on vient de faire comme configuration, on peut tout réunir dans un gros fichier unique qui va s'appeller 
+docker-compose
+il permet de réunir tous les paramètres d'une infrastructure Docker comportant 
+plusieurs objets : containers, volumes, réseaux, ...
+
+on peut stoper tout les conteneurs qu'on a démarré pour le moment parce que on en a plus besoin 
+
+docker stop web-my-net
+docker stop web-my-net-2
+docker stop web-volume
+docker stop web-volume-2
+
+aller voir le fichier docker-compose.yaml pour voir les configurations et je reviens ici 
+pour voir un peu plus en détail ce que ce fichier fait :
+la sortie de ce fichier différera un peu de ce qu'on a vu jusque mtn
+surtout dans l'interface graphique ou on voit tout les conteneurs lancés dans un seul "cluster" 
+
+VERSION : 
+    version: "3" : 
+        Spécifie la version de la syntaxe du fichier docker-compose.yml utilisée. 
+        La version 3 introduit un support pour de nouvelles fonctionnalités et est optimisée 
+        pour être utilisée avec Docker Engine version 1.13.0+ et Docker Swarm
+
+SERVICES/CONTENEURS : 
+    web1 :
+        Utilise l'image Docker custom-nginx pour créer le conteneur.
+        Mappe le port 80 de l'hôte sur le port 80 du conteneur, permettant l'accès au service web via http://localhost.
+        Connecte le conteneur au réseau my-net.
+        Montage d'un volume nommé web-volume sur /usr/share/nginx/html/ dans le conteneur, 
+        permettant de persister et de partager le contenu du site web entre les conteneurs et les sessions.
+    
+    web2 : 
+        fais la même chose que web1 : ils partagent également le même volume et le même réseau 
+
+VOLUMES : 
+    web-volume: 
+        Déclare un volume nommé web-volume. Ce volume est utilisé par les deux services pour persister le contenu 
+        du répertoire /usr/share/nginx/html/. Cela signifie que les modifications apportées à ce répertoire 
+        seront reflétées dans les deux services et resteront persistantes à travers le redémarrage des conteneurs.
+
+RESEAUX : 
+    my-net: 
+        Définit un réseau nommé my-net avec le driver bridge, qui est le type de réseau le plus courant utilisé 
+        pour connecter des conteneurs Docker sur le même hôte
+
+        ipam: : Configure la gestion des adresses IP pour le réseau.
+
+            config: : Permet de spécifier des configurations supplémentaires pour le réseau
+            subnet: 10.0.1.0/24 : Définit un sous-réseau pour le réseau my-net, ce qui donne aux conteneurs 
+            connectés à ce réseau des adresses IP dans la plage 10.0.1.0/24
+
+
+Pour résumer : 
+En utilisant ce fichier docker-compose, vous orchestrez deux conteneurs Nginx qui partagent le même contenu web 
+via un volume nommé et sont connectés au même réseau personnalisé, permettant une communication inter-conteneur. 
+Les services sont accessibles depuis l'hôte à deux ports différents, facilitant le test et l'accès à différentes 
+instances de Nginx. La définition du réseau avec un sous-réseau spécifique améliore la gestion de la connectivité 
+et de l'adressage entre les conteneurs.
+
+Observez tous les objets créés : containers, réseaux, volumes. 
+Notez comme ils ont tous été préfixés par le nom de l’infrastructure créée
+
+localhost:80 
+localhost:81 
+les deux fonctionnent
+
+
+essayer de modifier le contenu d'une page html et voir si ça change les deux :
+
+docker exec -it tp2-web1-1 /bin/bash 
+cd usr/share/nginx/html/
+nano index.html
+
+ça marche 
+
+trouver leurs addr ip : 
+
+docker exec -it tp2-web1-1 /bin/bash 
+ifconfig (10.0.1.2)
+
+
+docker exec -it tp2-web2-1 /bin/bash 
+ifconfig (10.0.1.3)
+
+faire des pings entre les deux (ip ou DNS) : ça fonctionne
+
+et puis on peut tout doucement s'arrêter là et arrêter l'infrastructure avec 
+
+docker compose down 
+
+ça a fonctionné 
+
+
+FINNNN DU TPPPPPPP 

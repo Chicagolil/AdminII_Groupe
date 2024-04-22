@@ -1,0 +1,540 @@
+TP5 : Configuration du service web public _____________________________________________________________________________________________
+
+Après la mise en place des domaines DNS, nous allons à présent mettre en 
+place un service web public, composé dans un premier temps d’un serveur web, 
+puis d’une base de données. Nous les sécuriserons entre autres via des certificats 
+TLS lors d’un prochain labo.
+
+1. Configuration de base d'un serveur web _____________________________________________________________________________________________
+
+1.1 Site web statique _____________________________________________________________________________________________
+
+normalement c'est ez 
+
+lancer un conteneur nginx sur mon vps 
+docker run --name my-nginx -p 80:80 -d nginx
+
+vérifier l'accès au site web : 
+1ère façon : curl http://www.lilian.l2-3.ephec-ti.be (dans le vps)
+
+ça retourne la page web en format html 
+
+2ème façon: 
+dans chrome : http://www.lilian.l2-3.ephec-ti.be
+
+
+créer un dockerfile dans le quel pour personnaliser la configuration du serveur web : 
+(etc/nginx/nginx.conf)
+
+
+
+
+
+# Utilisez l'image officielle Nginx
+FROM nginx:latest
+
+# Copiez votre fichier de configuration nginx personnalisé dans le conteneur
+COPY nginx.conf /etc/nginx/nginx.conf
+
+# Créez le répertoire pour le site web et définissez-le comme répertoire de travail
+WORKDIR /var/www/html/www
+
+# Copiez votre page d'accueil personnalisée dans le répertoire du site web
+COPY index.html /var/www/html/www/
+
+# Exposez le port 80 pour le trafic HTTP
+EXPOSE 80
+
+# Démarrez Nginx en mode premier plan
+CMD ["nginx", "-g", "daemon off;"]
+
+
+
+
+
+créer le fichier de configuration nginx 
+
+
+
+
+events {
+}
+http {
+    server {
+        listen          80;
+        server_name     www.lilian.l2-3.ephec-ti.be;  # Assurez-vous de remplacer cela par votre FQDN réel
+        index           index.html;
+        root            /var/www/html/www/;  # Chemin d'accès aux fichiers HTML
+    }
+}
+
+
+
+
+créez la page web personnalisée 
+
+aller voir index.html
+
+une fois que tout ça est fait on peut test
+
+docker stop my-nginx 
+docker rm my-nginx
+
+docker build -t mon-nginx . 
+docker run --name nginx -p 80:80 -d mon-nginx
+
+retourner sur le navigateur : ça fonctionne 
+
+1.2 Virtual hosting _____________________________________________________________________________________________
+
+le but ici c'est de définir un second site web, on a deux options : 
+
+1. Utiliser deux containers, un par site. Mais chiant pcq il faudra un reverse proxy pour orienter les requêtes vers
+l'un ou vers l'autre, en fonction du champ HOST de la requête 
+
+2. 1 seul container MAIS, on utilise du virtual hosting déjà vu au premier semestre ( jme souviens tqt pas de souces)
+
+On va utiliser la 2ième option 
+Petit rappel de ce que c'est le virtual hosting : permettre à un seul serveur web, donc une seule ip, de pouvoir hébérger 
+plusieurs sites web avec leurs propres noms de domaines.
+
+Que faire pour que ça fonctionne : 
+FIRST STEP : il faut modifier le fichier de configuration nginx POUR AVOIR TWO SITES 
+
+nginx.conf :
+
+
+
+http {
+    include       /etc/nginx/mime.types;
+    default_type  application/octet-stream;
+    
+    # Premier site - www.lilian.l2-3.ephec-ti.be
+    server {
+        listen       80;
+        server_name  www.lilian.l2-3.ephec-ti.be;
+        index        index.html;
+        root         /var/www/html/www/;
+    }
+
+    # Second site - blog.lilian.l2-3.ephec-ti.be
+    server {
+        listen       80;
+        server_name  blog.lilian.l2-3.ephec-ti.be;
+        index        index2.html;
+        root         /var/www/html/blog/;
+    }
+}
+
+Dans cet exemple, chaque "server" bloc représente un virtual host. Le server_name dirige Nginx pour répondre à 
+différentes requêtes basées sur le nom de domaine demandé.
+
+SECOND STEP : créer un deuxième site, index2.html, un blog cette fois ci, c'est lena situations ouuuuuuuuu? 
+
+THIRD STEP : modifier le Dockerfile pour copier le nouveau site dans le répertoire approprié dans le conteneur
+
+COPY index2.html /var/www/html/blog
+
+QUATUOR STEP : Mettre à jour la zone dns, on veut que la requête "blog.lilian.l2-3.ephec-ti.be" soit redirigé vers
+le bon serveur (ajouter cette petite lignette) : 
+
+blog.lilian.l2-3.ephec-ti.be.  CNAME  www.lilian.l2-3.ephec-ti.be.
+
+Ce record CNAME fait que blog.lilian.l2-3.ephec-ti.be pointera 
+vers www.lilian.l2-3.ephec-ti.be, qui doit pointer vers l'adresse IP, c'est juste pour dire que les deux partagent la même ip 
+
+Ensuite on reconstruit les conteneurs (web + dns) : 
+
+docker stop nginx 
+docker rm nginx
+docker rmi mon-nginx 
+
+docker build -t mon-nginx .
+docker run --name nginx -p 80:80 -d mon-nginx
+
+
+
+
+
+docker stop dns 
+docker rm dns 
+docker rmi monserveurdns
+
+docker build -t monserveurdns .
+docker run -d --name=dns -p 53:53/udp -p 53:53/tcp monserveurdns 
+
+on peut test : 
+
+dig @1.1.1.1 www.lilian.l2-3.ephec-ti.be
+dig @1.1.1.1 blog.lilian.l2-3.ephec-ti.be
+
+http://www.lilian.l2-3.ephec-ti.be 
+http://blog.lilian.l2-3.ephec-ti.be 
+
+curl http://www.lilian.l2-3.ephec-ti.be
+curl http://blog.lilian.l2-3.ephec-ti.be 
+
+si ça fonctionne tant mieux et si pas, cheh gros bouffon 
+
+PUNTOS TERMINADOS 
+
+1.3 Logging _____________________________________________________________________________________________
+
+nous on veut plus de contrôle et plus de surveillance, big brother is watching you, et big brother c'est moi 
+donc on va collecter les logs, essentiel 
+ça permet de suivre le bon déroulement des opérations d'un service, et, en cas de problème de pouvoir retracer
+l'historique des events 
+
+Il faut donc soigner leur configuration. 
+En général, sur Linux, les logs sont placés dans le répertoire /var/log/ 
+Mais pour les conteneurs, c'est différents, pour centralisr les logs, ils doivent être écrits sur les 
+flux stdout et stderr du conteneur 
+Les images "officielles" sont généralement configurées pour fonctionner de cette manière
+
+On peut le voir sur notre conteneur Web:
+docker exec -it nginx /bin/bash 
+cd /var/log/nginx
+ls -l 
+(on peut voir que access.log et error.log sont redirigés vers stdout et stderr)
+
+on peut donc voir les logs du conteneur : 
+docker logs nginx (c'est pas dynamique, il faut retaper la commande pour voir les nouveaux logs)
+
+un log quand on rafraîchit la page web ressemble à ça : 
+81.242.25.226 - - [20/Apr/2024:14:37:05 +0000] "GET / HTTP/1.1" 304 0 "-" "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+
+on revient en détail sur ce log : 
+
+Adresse IP du client : 81.242.25.226
+C'est l'adresse IP du client (ou du proxy) qui a effectué la requête au serveur.
+
+Identifiant du client (RFC 1413) : -
+Ce champ est généralement un tiret lorsque l'identification RFC 1413 n'est pas utilisée. 
+Cela signifie que l'identité du client n'a pas été vérifiée.
+
+UserID de la personne demandant : -
+Ce champ représente l'identifiant de l'utilisateur faisant la requête, tel que 
+déterminé par HTTP authentication. Le tiret indique qu'aucun utilisateur n'était authentifié.
+
+Date et heure de la requête : [20/Apr/2024:14:37:05 +0000]
+Cela indique quand la requête a été reçue par le serveur, avec le fuseau horaire UTC (+0000).
+
+Ligne de requête : "GET / HTTP/1.1"
+Méthode HTTP : GET indique que le client demandait des données du serveur.
+Ressource demandée : / indique que la requête était pour la racine du site (souvent la page d'accueil).
+Version du protocole HTTP : HTTP/1.1 est la version du protocole utilisée pour cette requête.
+
+Code de statut HTTP : 304
+Le code 304 signifie "Non modifié". Cela indique que la page demandée n'a pas été modifiée depuis la 
+dernière fois qu'elle a été demandée (et que le client peut utiliser la version mise en cache).
+
+Taille de l'objet retourné : 0
+Puisque le code de statut est 304, aucune donnée n'a été renvoyée au client, d'où la taille 
+de l'objet de 0 octets.
+
+Referer : -
+Ce champ indique la page précédente d'où provenait la requête. Un tiret signifie qu'il n'y avait pas de referer, 
+ce qui peut signifier que l'utilisateur 
+a tapé l'URL directement dans la barre d'adresse ou utilisé un signet.
+
+User-Agent : "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+Cela identifie le navigateur et le système d'exploitation du client. Ici, le client utilisait Google Chrome version 124.0.0.0 sur 
+un système d'exploitation Windows 10 (architecture 64 bits).
+
+
+
+
+On peut donc voir ici que les requêtes ne nous permettent pas d'identifier le virtualhost concerné pas la requête 
+Dans le cas d’une utilisation non dockerisée, la solution consiste à définir un fichier de log séparé pour chaque virtual host.
+Mais pour les conteneurs on va garder les logs sur stdout et rajouter une info pour identifer le virtualhost
+
+Pour définir un nouveau format de log, on utilise la directive log_format dans le contexte global. 
+Le nouveau format sera ensuite utilisé lors de la configuration des logs d’accès.
+
+log_format log_per_virtualhost '[$host] $remote_addr [$time_local]  $status "$request" $body_bytes_sent';
+
+Ici au dessus, $host est une variable qui identifie le virtualhost 
+le reste permet d'afficher l'ip du client, le timestamp, le statut HTTP de la réponse, l'en-tête de la requête 
+on peut rajouter d'autres trucs mais hassoul
+
+pour utiliser ce format, il faut l'indiquer dans la directive access_log 
+
+access_log /dev/stdout log_per_virtualhost;
+
+
+et on va foutre tout ça dans le cul de nginx.conf et ducoup redémmarer le conteneur 
+
+docker stop nginx 
+docker rm nginx 
+docker rmi mon-nginx 
+
+docker build -t mon-nginx .
+docker run --name nginx -p 80:80 -d mon-nginx
+
+
+docker logs -f nginx (maintenant c'est dynamique grâce au -f)
+on voit le virtuaaaal host, ça a marché bababoy bababoy 
+
+
+2. Site web dynamique ____________________________________________________________________________________________________________
+jle sens d'ici ça pue de fou, j'aime pas trop ce terme la dynamique,gnegnegne 
+
+jusqu'ici, les sites étaient statiques, le serveur renvoient juste les fichiers stockés dans son système de fichiers 
+maais de nos jours le contenu se doit de se générer dynamiquement en fonction de la requête et du contexte 
+
+ceux ci fonctionnent grâce à une base de données qui stocke les informations et un programme qui gère les pages web. ce
+programme peut tourner dans un processus distinct du serveur web OU NON, ça dépend des cas. il se chargera de se connecter et 
+d'intéragir avec le SGBD 
+
+on va utiliser ici MariaDB et php, pas besoin de comprendre tout les détails de ce qui se passe mais juste de comprendre 
+la logique qui se cache derrière ça 
+
+on va se contenter ici d'un petit script qui permet de récuperer qqles infos, càd on va afficher une liste de produits offerts par 
+l'entreprise WOOOOOOOOODYYYYYYTOOOOYS
+
+2.1 Installation de la DB ____________________________________________________________________________________________________________
+
+2.1.1 Premier test de MariaDB ____________________________________________________________________________________________________________
+
+on va lancer un conteneur MariaDB, puis s'y connecter depuis le vps, via le client MariaDB
+
+STEP 1 : Démarrer le conteneur MariaDB avec cte commande : 
+
+docker run --name mariadbtest -e MYSQL_ROOT_PASSWORD=mypass --rm -d mariadb
+
+que fait elle ? 
+
+-e MYSQL_ROOT_PASSWORD=mypass : définit une variable d'environement, ici c'est le mot de passe de l'utilisateur root de la DB 
+--rm : supprime le conteneur automatiquement quand il est inutilisé 
+-d : lance le conteneur en arrière plan 
+
+STEP 2 : installer le client MariaDB sur le VPS : 
+
+sudo apt install mariadb-client
+
+STEP 3 : Récuperer l'addresse IP du conteneur MariaDB et se connecter depuis le VPS, via le iencli 
+ 
+docker exec -it mariadbtest /bin/bash 
+hostname -i
+172.17.0.4/16 (ip du conteneur)
+
+mysql -h 172.17.0.4 -u root -p (connexion à la DB depuis le VPS)
+
+mysql : client mysql en terminal de commande, il permet de faire des requêtes SQL 
+-h 172.17.0.4 : ip du serveur au quel se connecter 
+-u root : avec quel utilisateur se connecter 
+-p : indique au client de demander un mot de passe pour se connecter 
+
+ça marche 
+
+STEP 4 : état des lieux de la DB 
+
+show databases; (le point virgule est obligatoire sinon ça marche ap)
+
+
+2.1.2 Ajouter du contenu à la base de donnée _____________________________________________________________________________________________________________
+
+comme l'objectif est d'afficher des produits, il faut les créer ces produits et qu'ils existent 
+
+comment qu'on fé : 
+
+STEP UNO : 
+se connecter au serveur MySql 
+✓✓✓✓✓ CHECK ✓✓✓✓✓ 
+
+
+STEP DUO  créer la base de données qu'on va utiliser : 
+CREATE DATABASE woodytoys;
+✓✓✓✓✓ CHECK ✓✓✓✓✓
+
+STEP TRES  créer un fichier woodytoys.sql dans le vps, qui contient 
+les instructions sql nécessaires à la création de la table et des données : 
+
+USE woodytoys;
+
+CREATE TABLE products (
+  id mediumint(8) unsigned NOT NULL auto_increment,
+  product_name varchar(255) default NULL,
+  product_price varchar(255) default NULL,
+  PRIMARY KEY (id)
+) AUTO_INCREMENT=1;
+
+INSERT INTO products (product_name, product_price) VALUES 
+("Set de 100 cubes multicolores", "50"),
+("Yoyo", "10"),
+("Circuit de billes", "75"),
+("Arc à flèches", "20"),
+("Maison de poupées", "150");
+
+✓✓✓✓✓ CHECK ✓✓✓✓✓
+
+STEP QUATTRO vérifier que tout c'est passé comme prévu : 
+
+use woodytoys; 
+show tables; 
+select * from products; 
+✓✓✓✓✓ CHECK ✓✓✓✓✓
+
+
+2.2 Premier script PHP ____________________________________________________________________________________________________________
+
+la DB est remplie et fonctionnelle donc on va reprendre avec le serveur nginx et lui donner du php pour pouvoir interragir avec 
+les données . 
+
+nginx n'est pas capable d'éxecuter du php dans son processus propre, donc on va avoir besoin d'un service PHP tourant dans 
+un processusséparé, avec lequel nginx communiquera via un protocole appelé FastCGI. nginx recoit une requête qui nécessite 
+l'éxecution de script php, bam il a juste à la renvoyer au processus dédié, qui lui renverra la page générée. 
+Nginx est donc ici un reverse proxy
+On va utiliser PHP-FPM (PHP FastCGI Process Manager)
+
+Deux services dit deux conteneurs différents qui vont communiquer via UN RESEAU 
+Un conteneur nginx 
+et un autre dans le quel tournera PHP-FPM 
+
+On va créer un sous-répertoire php dans le quel il va y avoir un Dockerfile pour la création du conteneur
+pour PHP-FPM 
+
+STEP 1 : Créer le nouveau Dockerfile
+
+FROM php:8.3-fpm 
+RUN docker-php-ext-install mysqli
+✓✓✓✓✓ CHECK ✓✓✓✓✓
+
+STEP 2 : Générer l'image 
+
+docker build -t monphpfpm . 
+
+✓✓✓✓✓ CHECK ✓✓✓✓✓
+
+
+STEP 3 : créer une page products.php avec une seule ligne de code 
+
+<?php phpinfo(); ?>
+
+Ce code générera simplement une page reprenant la version de PHP utilisée. Ce répertoire sera partagé entre le container 
+nginx et le container php, afin qu’ils aient tout deux accès au script php.
+✓✓✓✓✓ CHECK ✓✓✓✓✓
+
+STEP 4 : lancer le conteneur php en lui donnant accès aux fichiers html grâce au bind mount 
+
+docker run --name php --rm -d --mount type=bind,source=/home/lilian/TP5,target=/var/www/html/www monphpfpm
+✓✓✓✓✓ CHECK ✓✓✓✓✓
+
+STEP 5 : récup l'addresse ip de ce container
+
+docker exec -it php /bin/bash 
+hostname -i 
+172.17.0.5/16
+✓✓✓✓✓ CHECK ✓✓✓✓✓
+
+STEP 6 : modifier le fichier nginx.conf pour lui dire quoi faire quand il recoit des fichiers .php
+
+events {
+}
+http {
+    log_format log_per_virtualhost '[$host] $remote_addr [$time_local]  $status "$request" $body_bytes_sent';
+    access_log /dev/stdout log_per_virtualhost;
+
+    
+    # Premier site - www.lilian.l2-3.ephec-ti.be
+    server {
+        listen       80;
+        server_name  www.lilian.l2-3.ephec-ti.be;
+        index        index.html;
+        root         /var/www/html/www/;
+        location ~* \.php$ {
+            fastcgi_pass 172.17.0.5:9000;
+            include fastcgi_params;
+            fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+	    }
+    }
+
+    # Second site - blog.lilian.l2-3.ephec-ti.be
+    server {
+        listen       80;
+        server_name  blog.lilian.l2-3.ephec-ti.be;
+        index        index2.html;
+        root         /var/www/html/blog/;
+    }
+}
+on va relancer nginx ducoup : 
+
+
+docker stop nginx 
+docker rm nginx
+docker rmi mon-nginx 
+
+docker build -t mon-nginx .
+docker run --name nginx -p 80:80 -d mon-nginx
+
+on va tester si ça fonctionne(j'y crois pas trop mais inchallah )
+
+http://www.lilian.l2-3.ephec-ti.be/products.php
+
+CA A MARCHEEEEEE oui maggle jsuis trop fort sucez moi ma grosse beteu 
+
+
+2.3. Connexion entre l’application web et la base de données _____________________________________________________________________________________________
+
+La base de données fonctionne, comme le script php 
+mais pour le moment le site, il est guezos  
+dooooooonc on va améliorer tout ça en allant piocher les données dans la base de données 
+et les afficher sur notre page php 
+
+on modifie donc la page products.php 
+
+
+
+<html>
+<style>
+    table,
+    th,
+    td {
+        padding: 10px;
+        border: 1px solid black;
+        border-collapse: collapse;
+    }
+</style>
+
+<head>
+    <title>Catalogue WoodyToys</title>
+</head>
+
+<body>
+    <h1>Catalogue WoodyToys</h1>
+
+    <?php
+    $dbname = 'woodytoys';
+    $dbuser = 'root';
+    $dbpass = 'mypass';
+    $dbhost = '172.17.0.4';
+    $connect = mysqli_connect($dbhost, $dbuser, $dbpass) or die("Unable to connect to '$dbhost'");
+    mysqli_select_db($connect, $dbname) or die("Could not open the database '$dbname'");
+    $result = mysqli_query($connect, "SELECT id, product_name, product_price FROM products");
+    ?>
+
+    <table>
+        <tr>
+            <th>Numéro de produit</th>
+            <th>Descriptif</th>
+            <th>Prix</th>
+        </tr>
+
+        <?
+        while ($row = mysqli_fetch_array($result)) {
+            printf("<tr><th>%s</th> <th>%s</th> <th>%s</th></tr>", $row[0], $row[1], $row[2]);
+        }
+        ?>
+
+    </table>
+</body>
+
+</html>
+
+
+et on regarde si ça fonctionne, oui nickel parfait jsuis trop fort 
+
+2.4 Docker Compose _____________________________________________________________________________________________
+
+Ici c'est la merde, mon système de fichier pour le ce tp pue la merde et ducoup on va pas faire le docker compose 
+ici mais je vais régler ce problème dans le TP6 en refaisant le système de fichier au propre 

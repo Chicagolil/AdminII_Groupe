@@ -1,0 +1,615 @@
+TP4 Mise en place et sécurisation du DNS public__________________________________________________________________
+
+1. Installation et configuration de Bind en tant que serveur autoritaires sur un VPS ____________________________
+
+nom de domaine de notre groupe (2TL2-3) : l2-3.ephec-ti.be
+
+1.1 Préparation______________________________________________________________________
+
+- Organisation du vps 
+
+hierarchie des répertoires : 
+
+un dossier srv :
+    un dossier dns :
+        fichier zones  
+        fichier config
+        fichier scripts 
+        fichier logs 
+        fichier backup 
+
+créer un utilisateur unix non privilégié : 
+
+sudo adduser unix 
+
+sudo usermod -aG docker unix
+
+
+Votre repository Github et son Wiki : hassoul 
+
+Méthode de configuration : hassoul
+
+
+1.2 Mise en place du serveur autoritaire public__________________________________________________________________
+
+l'image qu'on va utiliser est : internetsystemsconsortium/bind9 
+c'est une image sur la quelle Bind9 est pré-installé 
+
+1.2.1 Premier test du container__________________________________________________________________________
+
+docker run -d --name=dns -p 53:53/udp -p 53:53/tcp internetsystemsconsortium/bind9:9.18
+
+Cette commande va mapper les ports DNS du container sur les ports 53 du VPS
+
+docker exec -it dns /bin/bash (juste pour aller voir le fichier /etc/bind/named.conf par défaut)
+
+sudo apt install dnsutils -y
+
+dig @localhost www.google.com
+
+j'ai ça comme réponse de mon vps : 
+
+
+; <<>> DiG 9.11.5-P4-5.1+deb10u10-Debian <<>> @localhost www.google.com
+; (2 servers found)
+;; global options: +cmd
+;; Got answer:
+;; ->>HEADER<<- opcode: QUERY, status: NOERROR, id: 42354
+;; flags: qr rd ra; QUERY: 1, ANSWER: 1, AUTHORITY: 0, ADDITIONAL: 1
+
+;; OPT PSEUDOSECTION:
+; EDNS: version: 0, flags:; udp: 1232
+; COOKIE: ca17d3eea04ef470010000006613e9cea7ba45d31451c73f (good)
+;; QUESTION SECTION:
+;www.google.com.                        IN      A
+
+;; ANSWER SECTION:
+www.google.com.         300     IN      A       216.58.212.4
+
+;; Query time: 85 msec
+;; SERVER: ::1#53(::1)
+;; WHEN: Mon Apr 08 12:57:50 UTC 2024
+;; MSG SIZE  rcvd: 87
+
+
+on revient en détail dessus : 
+
+En-tête
+
+opcode: QUERY : Indique que l'opération demandée par dig était une requête.
+
+status: NOERROR : Signifie que la requête a été traitée avec succès sans erreurs.
+
+id: 42354 : C'est l'identifiant de la requête, utilisé pour correspondre les requêtes aux réponses dans un environnement où plusieurs requêtes sont faites en parallèle.
+
+
+flags: qr rd ra :
+qr (query response) indique qu'il s'agit d'une réponse à une requête.
+rd (recursion desired) indique que le client a demandé la récursion.
+ra (recursion available) signifie que le serveur peut faire de la récursion.
+
+Sections
+
+QUESTION SECTION : Montre la question originale posée, dans ce cas, quelle est l'adresse IP de www.google.com. 
+IN A signifie que la requête est pour un enregistrement d'adresse IPv4.
+
+ANSWER SECTION : Fournit la réponse à la question. Ici, elle indique que l'adresse IPv4 
+de www.google.com est 216.58.212.4. Le 300 indique le temps (en secondes) pendant lequel la réponse peut être mise 
+en cache avant d'être considérée comme obsolète.
+
+Informations supplémentaires
+
+Query time: 85 msec : Le temps que la requête a pris pour être complétée.
+
+SERVER: ::1#53(::1) : Indique que le serveur qui a répondu à la requête est 
+mon serveur local (noté ici par son adresse IPv6 localhost ::1), écoutant sur le port 53.
+
+WHEN : La date et l'heure à laquelle la requête a été faite.
+
+MSG SIZE rcvd: 87 : La taille du message de réponse reçu, en octets.
+
+Pour résumer : 
+
+Conclusion
+Mon serveur DNS local a réussi à résoudre www.google.com en 216.58.212.4, ce qui signifie que mon serveur 
+DNS fonctionne correctement pour cette requête. La réponse a été obtenue rapidement (85 ms), et le serveur indiqué 
+est bien le serveur local (::1 indique localhost en IPv6). Cela montre que ma requête a été traitée par mon 
+configuration locale, comme souhaité.
+
+1.2.2 Configuration du mode autoritaire___________________________________________________________________________________
+
+le serveur DNS fonctionne mais pas exactement comme nous on le souhaiterai, moi je veux que : 
+
+interdir la récursion et la mise en cache 
+accepter les requêtes depuis tout L'internet(définir une zone publique)
+définir le serveur comme étant maître de la zone, en lui indiquant le fichier de zone 
+à utiliser 
+
+donc on va changer la configuration du serveur (/etc/bind/named.conf) suivant ce fichier : 
+
+options {
+  directory "/var/cache/bind";
+  // version statement for security to avoid hacking known weaknesses
+  // if the real version number is revealed
+  version "not currently available";
+  allow-query { any; };
+  allow-query-cache { none; };
+  recursion no;
+};
+
+zone "l2-3.ephec-ti.be." {
+  type master;
+  file "/etc/bind/l2-3.zone";
+  allow-transfer {
+    none;
+  };
+};
+
+on reviens en détail sur ce fichier de configuration :
+
+Section options :
+directory "/var/cache/bind"; : Définit le répertoire de travail de BIND où il stockera ses fichiers 
+temporaires et de cache.
+
+version "not currently available"; : Modifie la réponse aux requêtes demandant la version du serveur DNS, 
+dans un but de sécurité. Cela aide à masquer la version exacte de BIND pour rendre plus difficile pour un 
+attaquant de cibler des vulnérabilités spécifiques à la version.
+
+allow-query { any; }; : Autorise les requêtes DNS de n'importe quelle source. Cela signifie que n'importe 
+qui peut interroger votre serveur DNS pour les zones qu'il gère.
+
+allow-query-cache { none; }; : Empêche quiconque de faire des requêtes sur le cache du serveur DNS. Cela 
+peut être utilisé pour des raisons de sécurité ou de confidentialité.
+
+recursion no; : Désactive la récursion DNS sur le serveur. Un serveur en mode récursif accepte les requêtes 
+pour les domaines qu'il ne gère pas directement et essaie de résoudre ces requêtes en interrogeant d'autres serveurs DNS. 
+En désactivant la récursion, le serveur répondra seulement pour les zones qu'il gère directement, ce qui est une 
+pratique courante pour un serveur DNS autoritaire et augmente la sécurité en réduisant la surface d'attaque pour les 
+attaques par amplification
+
+Section zone :
+zone "<your-zone>.ephec-ti.be."  : Définit une zone DNS que ce serveur gérera en tant que serveur principal (maître). 
+Remplacez <your-zone> par le nom de la zone que vous configurez.
+
+type master; : Indique que ce serveur agira comme le serveur principal pour cette zone. Cela signifie qu'il détient 
+l'autorité sur les enregistrements DNS de cette zone et peut répondre aux requêtes pour celle-ci.
+
+file "/etc/bind/<yourzone>.zone"; : Spécifie le chemin du fichier de zone qui contient les enregistrements DNS pour 
+cette zone. Vous devez remplacer <yourzone> par le nom de fichier approprié.
+
+allow-transfer { none; }; : Empêche le transfert de zone à d'autres serveurs DNS. Les transferts de zone sont utilisés 
+pour répliquer les données de zone entre serveurs DNS maîtres et esclaves. En spécifiant none, vous interdisez à tout autre 
+serveur de demander une copie complète de la base de données de la zone, ce qui est une mesure de sécurité pour empêcher la 
+divulgation d'informations.
+
+
+Pourquoi interdit-on la récursion ? 
+
+C'est une pratique de sécurité importante pour plusieures raisons : 
+
+
+Interdire la récursion sur un serveur DNS autoritaire améliore la sécurité en réduisant la surface d'attaque et en prévenant 
+les attaques par amplification DNS. Cela optimise également les performances en se concentrant sur la gestion des requêtes pour 
+les zones dont il est directement responsable, et assure une bonne séparation des rôles entre les serveurs DNS autoritaires et 
+récursifs.
+
+Devez-vous configurer une zone inverse pour votre sous-domaine ? Pourquoi ?
+
+
+Configurer une zone inverse pour votre sous-domaine n'est pas obligatoire, mais peut être utile pour la résolution de noms inverse, 
+l'authentification et la lutte contre le spam, ainsi que pour le diagnostic réseau. Cela dépend des besoins spécifiques et de si 
+on a accès à la configuration de la plage d'adresses IP concernée.
+
+
+A priori dans le fichier de zone on aurait ça : 
+
+
+$TTL 3600
+$ORIGIN l2-3.ephec-ti.be.
+
+@       IN      SOA     ns1.l2-3.ephec-ti.be. admin.l2-3.ephec-ti.be. (
+                            2023040901 ; Serial
+                            7200       ; Refresh
+                            1200       ; Retry
+                            2419200    ; Expire
+                            3600 )     ; Negative Cache TTL
+
+; Définition des serveurs de noms
+@       IN      NS      ns1.l2-3.ephec-ti.be.
+
+; Enregistrements A pour les serveurs de noms
+ns1     IN      A       54.37.12.55
+
+; Enregistrements A supplémentaires
+www     IN      A       54.37.12.55
+mail    IN      A       54.37.12.55
+
+Revenons en détails sur ce que fais ce fichier de zone : 
+
+
+Ce fichier de zone configure le DNS pour le domaine l2-3.ephec-ti.be. et contient les informations essentielles pour la résolution de 
+noms et la gestion des requêtes DNS pour ce domaine. Voici le détail de son fonctionnement :
+
+
+Paramètres globaux: 
+
+$TTL 3600 : Définit le "Time To Live" par défaut à 3600 secondes (1 heure) pour les enregistrements dans ce fichier.
+Cela indique combien de temps les serveurs DNS en aval peuvent mettre en cache les réponses avant de devoir les rafraîchir.
+
+$ORIGIN l2-3.ephec-ti.be. : Spécifie le domaine racine pour les enregistrements relatifs dans ce fichier, permettant 
+d'omettre la répétition du domaine complet pour chaque enregistrement.
+
+Section SOA (Start of Authority) :
+
+- @ IN SOA ns1.l2-3.ephec-ti.be. admin.l2-3.ephec-ti.be. :
+  - @ représente le domaine racine défini par $ORIGIN, soit l2-3.ephec-ti.be..
+  - SOA indique qu'il s'agit de l'enregistrement de démarrage d'autorité pour la zone.
+  - ns1.l2-3.ephec-ti.be. est le serveur DNS principal (maître) pour la zone.
+  - admin.l2-3.ephec-ti.be. est l'adresse de contact de l'administrateur (remplacez le @ par un point).
+  - Les nombres sont les paramètres SOA : numéro de série, temps de rafraîchissement, temps de réessai, temps d'expiration, 
+  et TTL négatif.
+
+Enregistrements NS (Name Server)
+- @ IN NS ns1.l2-3.ephec-ti.be. : Désigne ns1.l2-3.ephec-ti.be. comme serveur de noms autoritaire pour le 
+  domaine l2-3.ephec-ti.be., indiquant où les requêtes DNS pour ce domaine doivent être dirigées.
+
+
+Enregistrements A (Address)
+
+- ns1 IN A 54.37.12.55 : Associe le sous-domaine ns1.l2-3.ephec-ti.be. à l'adresse IP 54.37.12.55. Cela identifie l'adresse IP du serveur de noms.
+- www IN A 54.37.12.55 : Pointe www.l2-3.ephec-ti.be. vers la même adresse IP, indiquant où le site web pour ce domaine est hébergé.
+- mail IN A 54.37.12.55 : Associe mail.l2-3.ephec-ti.be. à l'adresse IP 54.37.12.55, indiquant où le service de messagerie pour ce domaine est hébergé.
+
+CONCLUSION : 
+
+Ce fichier de zone établit la configuration DNS pour le domaine l2-3.ephec-ti.be., y compris les informations sur le serveur de noms autoritaire, 
+l'administrateur du domaine, et l'emplacement des services clés (web et mail) par leurs adresses IP. Il sert de référence pour les serveurs DNS 
+pour répondre aux requêtes concernant ce domaine.
+
+
+
+on va rajouter ces fichiers dans mon vps et puis les binder au conteneur qui va accueillir le serveur dns 
+
+les deux fichiers sont copiés dans le répertoire :  /home/lilian/TP4
+
+on peut maintenant les binder à mon conteneur grâce à la commande suivante : 
+
+
+- docker stop dns (celui là ne va plus servir) 
+
+- docker run -d --name=dns -p 53:53/udp -p 53:53/tcp --mount type=bind,source=/home/lilian/TP4/named.conf,target=/etc/bind/named.conf --mount type=bind,source=/home/lilian/TP4/l2-3.zone,target=/etc/bind/l2-3.zone internetsystemsconsortium/bind9:9.18
+ 
+ok c'est parti, prions pour que ça marche 
+état du conteneur : 
+- les ports sont biens mappés 
+- le mount à l'air d'avoir fonctionné 
+
+maintenant les épreuves ultimes : 
+
+dans le vps : 
+
+dig @localhost www.google.com (ça ne devrait plus fonctionner)
+
+j'ai ça comme réponse : 
+
+; <<>> DiG 9.11.5-P4-5.1+deb10u10-Debian <<>> @localhost www.google.com
+; (2 servers found)
+;; global options: +cmd
+;; Got answer:
+;; ->>HEADER<<- opcode: QUERY, status: REFUSED, id: 39904
+;; flags: qr rd; QUERY: 1, ANSWER: 0, AUTHORITY: 0, ADDITIONAL: 1
+;; WARNING: recursion requested but not available
+
+;; OPT PSEUDOSECTION:
+; EDNS: version: 0, flags:; udp: 1232
+; COOKIE: f77a80fa5df9b6ca010000006617fcf74d473bc89c1330c5 (good)
+;; QUESTION SECTION:
+;www.google.com.                        IN      A
+
+;; Query time: 1 msec
+;; SERVER: ::1#53(::1)
+;; WHEN: Thu Apr 11 15:08:39 UTC 2024
+;; MSG SIZE  rcvd: 71
+
+parfait ça n'a pas fonctionné, c'est ce qu'on voulait, le statut est refused car le serveur 
+DNS limite les réponses aux zones pour lesquelles il est autoritaire.
+et de plus on voit bien que la récursion est demandée mais pas "available" 
+
+
+deuxième épreuve ultime : 
+
+dig @localhost www.l2-3.ephec-ti.be
+
+j'ai ça comme réponse : 
+
+; <<>> DiG 9.11.5-P4-5.1+deb10u10-Debian <<>> @localhost www.l2-3.ephec-ti.be
+; (2 servers found)
+;; global options: +cmd
+;; Got answer:
+;; ->>HEADER<<- opcode: QUERY, status: NOERROR, id: 39324
+;; flags: qr aa rd; QUERY: 1, ANSWER: 1, AUTHORITY: 0, ADDITIONAL: 1
+;; WARNING: recursion requested but not available
+
+;; OPT PSEUDOSECTION:
+; EDNS: version: 0, flags:; udp: 1232
+; COOKIE: 5523c7cb5b1e6833010000006617fe4068e033afcbc8d4e8 (good)
+;; QUESTION SECTION:
+;www.l2-3.ephec-ti.be.          IN      A
+
+;; ANSWER SECTION:
+www.l2-3.ephec-ti.be.   3600    IN      A       54.37.12.55
+
+;; Query time: 1 msec
+;; SERVER: ::1#53(::1)
+;; WHEN: Thu Apr 11 15:14:08 UTC 2024
+;; MSG SIZE  rcvd: 93
+
+
+c'est maginifique ça a fonctionné, 
+ - status: NOERROR : la requête a été traitée avec succès 
+ - flags: 
+    - qr : query response 
+    - aa : authoritative answer, la réponse provient d'un serveur faisant autorité pour le domaine demandé, c'est ce qu'on voulait 
+    - rd : recursion desired 
+ - answer section : on a eu l'addresse ip pour le domaine demandé parfait hassoul allah-ouakbar
+
+quelques commandes de check 
+
+netstat -tulnp (dans le vps )
+
+docker exec -it dns /bin/bash: 
+
+named-checkconf (jsp comment ça fonctionne)
+named-checkzone (jsp comment ça fonctionne)
+
+on va reformuler la commande docker pour pouvoir voir les logs, ce qui n'était pas possible pour l'instant parce docker collecte 
+les logs dans stdout/stderr, la voici modifiée : 
+
+docker stop dns 
+
+dock rm dns 
+
+docker run -d --name=dns -p 53:53/udp -p 53:53/tcp --mount type=bind,source=/home/lilian/TP4/named.conf,target=/etc/bind/named.conf --mount type=bind,source=/home/lilian/TP4/l2-3.zone,target=/etc/bind/l2-3.zone internetsystemsconsortium/bind9:9.18 named -g -u bind
+
+
+docker logs dns (pout voir les logs)
+
+1.2.3 CONSTRUCTION D'UNE IMAGE POUR LE SERVEUR AUTHORITAIRE ______________________________________________________________________________________________________________________________________________________________________________________________________________________
+
+Nickel maintenant que tout fonctionne correctement, on peut écrire un dockerfile 
+pour construire l'image qui fait tout ça à notre place : 
+
+FROM internetsystemsconsortium/bind9:9.18
+ADD ./named.conf /etc/bind/named.conf
+ADD l2-3.zone /etc/bind/l2-3.zone
+RUN chown -R bind:bind /etc/bind
+CMD ["/usr/sbin/named", "-g", "-c", "/etc/bind/named.conf", "-u", "bind"]
+
+
+on revient sur ce qui se passe dans ce dockerfile :
+
+FROM internetsystemsconsortium/bind9:9.18 : 
+Cette ligne spécifie l'image de base à utiliser pour la construction de l'image Docker. Ici, il s'agit de 
+l'image officielle BIND9 version 9.18, fournie par l'Internet Systems Consortium.
+
+ADD ./named.conf /etc/bind/named.conf :
+Cette commande copie le fichier named.conf depuis votre dossier local (où se trouve le Dockerfile dans le vps) 
+vers le répertoire /etc/bind/ dans l'image Docker. named.conf est le fichier de configuration principal de BIND, 
+utilisé pour définir le comportement du serveur DNS.
+
+ADD l1-1.zone /etc/bind/l1-1.zone :
+De même, cette ligne copie un fichier de zone DNS, l1-1.zone, depuis mon dossier local du vps vers /etc/bind/ dans 
+l'image Docker. Ce fichier contient des enregistrements DNS pour une zone spécifique, l1-1.
+
+RUN chown -R bind:bind /etc/bind :
+Cette instruction modifie le propriétaire (et groupe) des fichiers et répertoires dans /etc/bind/ pour les attribuer 
+à l'utilisateur et au groupe bind. Cela assure que le serveur BIND, qui s'exécute sous l'identifiant utilisateur bind
+pour des raisons de sécurité, a les permissions nécessaires pour lire et modifier ses fichiers de configuration et de zone.
+
+CMD ["/usr/sbin/named", "-g", "-c", "/etc/bind/named.conf", "-u", "bind"] :
+Cette commande définit la commande par défaut à exécuter lorsque le conteneur est lancé. 
+Elle démarre le serveur DNS BIND avec les options suivantes :
+
+-g : Exécute named en avant-plan et affiche les logs dans la sortie standard, ce qui est pratique pour les conteneurs Docker.
+-c /etc/bind/named.conf : Spécifie le chemin vers le fichier de configuration de BIND.
+-u bind : Indique à named de s'exécuter sous l'utilisateur bind pour des raisons de sécurité.
+
+ensuite on peut construire l'image : 
+
+docker build -t monserveurdns .
+docker images
+docker run -d --name=dns -p 53:53/udp -p 53:53/tcp monserveurdns 
+
+dig @localhost mail.l2-3.ephec-ti.be
+
+
+
+1.3 Délégation de la zone ______________________________________________________________________________________________________________________________________________________________________________________________________________________
+
+1.4. Validation du serveur autoritaire _________________________________________________________________________________________________________________________________________________________________________________________________________
+
+
+2. Sécurisation DNSSEC__________________________________________________________________________________________________________________
+C'est quoi dnssec ?  : 
+Il a été conçu pour protéger contre certaines vulnérabilités du DNS, comme le cache poisoning et les attaques de redirection, 
+en ajoutant une couche de vérification cryptographique aux réponses DNS. 
+Voici quelques points clés à propos du DNSSEC :
+1. Authentification des données DNS :
+DNSSEC permet d'authentifier l'origine des données DNS reçues, 
+assurant que les réponses proviennent bien de la source autorisée et n'ont pas été modifiées en transit.
+2. Intégrité des données :
+Il garantit l'intégrité des données DNS, c'est-à-dire que les données n'ont pas été altérées depuis leur c
+réation par la source autorisée.
+3. Chaîne de confiance :
+DNSSEC fonctionne en créant une chaîne de confiance depuis la racine DNS jusqu'au domaine spécifique, 
+utilisant des signatures numériques pour valider cette chaîne à chaque étape. Chaque niveau de l'arborescence 
+DNS signe cryptographiquement les enregistrements pour le niveau suivant.
+4. Extension, pas un remplacement :
+DNSSEC est une extension du protocole DNS existant; il n'est pas destiné à remplacer le DNS mais plutôt à améliorer sa sécurité.
+5. Utilisation des clés et des signatures :
+Il utilise des clés publiques et privées (cryptographie à clé publique) pour signer et vérifier les enregistrements DNS. 
+Les signatures sont attachées aux enregistrements DNS traditionnels sous forme de nouveaux types d'enregistrements DNS.
+
+2.1 Génération des clés et signature de la zone _________________________________________________________________________________________________________________________________________________________________________________________________________
+
+Bind9 peut se charger de la génération de clés pour la zone, et de la signature des Resources Records.
+Pour cela, il suffit d’indiquer les deux lignes suivantes dans votre zone : (dans la partie qui concerne la zone dans le fichier named.conf)
+
+  inline-signing yes;
+  dnssec-policy default;
+
+La première ligne indique que les signatures seront stockées dans un fichier séparé du fichier de zone original, 
+sous le nom <filezone>.signed. Notez qu’il faut donc que le répertoire de la zone doit être accessible en écriture 
+au processus Bind!
+
+La seconde ligne indique que Bind va utiliser la politique par défaut pour le DNSSEC. Une politique DNSSEC consiste 
+en l’ensemble de paramètres utilisés (ex : algorithme cryptographique, type de clés, durée de vie de la clé, …). 
+La politique par défaut convient dans la plupart des cas. Notez que la durée de vie de la clé principale est 
+illimitée. Si une autre valeur est indiquée, Bind génère alors une autre clé au bout du temps imparti, 
+et se charge de tous les changements associés (à l’exception du DS record dans la zone parente).
+
+lets go on va rajouter ça dans named.conf 
+
+étant donné que notre fichier named.conf n'est plus monté en volume dans le container il faut recommencer toute la manip de création
+d'image 
+
+docker stop dns 
+docker rm dns 
+docker rmi monserveurdns
+
+docker build -t monserveurdns
+docker run -d --name=dns -p 53:53/udp -p 53:53/tcp monserveurdns 
+docker restart dns (facultatif, mais c'est pour être sûr que le service dns redémarre bien)
+
+2.2 Validation de la clé publique via la zone parente _________________________________________________________________________________________________________________________________________________________________________________________________________
+
+Pour garantir la validité de la clé publique, il faut, comme déjà mentionné plus haut, utiliser une chaîne de confiance. 
+Le DNSSEC se base sur la structure hiérarchique du DNS pour cela : la racine du DNS sera la racine de la chaîne de confiance. 
+La racine se portera garante des TLDs en fournissant une signature validant leurs clés publiques dans un RR de type DS. 
+Les TLDs, quant à eux, contiendront, dans leur fichier de zone, des records DS pour leurs sous-domaines, et ainsi de suite.
+
+Pour générer le RR DS ( Delegation signer )pour la zone parente il faut d'abord trouver le fichier KSK. On peut trouver le fichier dans le directory indiquer par le paramètre
+directory "/var/cache/bind"; dans options du fichier de configuration de bind. Une fois dans se dossier il nous suffit de trouver le fichier KSK
+(fichier qui termine en .key) et de le passer en paramètre a la commande dnssec-dsfromkey : 
+
+dnssec-dsfromkey -2 Kl2-3.ephec-ti.be.+013+06553.key 
+
+en sortie on a ça : 
+
+l2-3.ephec-ti.be. IN DS 6553 13 2 D3AF54788CD4CFEADBC5C12C03183DC893BF82FF63C5BEDD5B0425A3FEDB37A8
+
+Ce record est destiné à être utilisé par la zone parente pour établir une chaîne de confiance avec notre zone 
+DNSSEC sécurisée. En raison des restrictions de notre fournisseur DNS, ce record n'est pas actuellement enregistré 
+dans la zone parente ephec-ti.be mais est documenté ici pour des fins de démonstration et d'évaluation.
+
+2.3 Tester la sécurisation d'une zone DNS _________________________________________________________________________________________________________________________________________________________________________________________________________
+
+1. Outils en ligne https://dnssec-analyzer.verisignlabs.com/ et https://dnsviz.net :  étant donné que je dois 
+attendre que mon dns soit accessible au grand public, je ne peux pas encore tester ces ptites merveilles 
+
+2. Utiliser dig pour 
+
+-Vérifier les enregistrements A et RRSIG _________________________________________________________________________________________________________________________________________________________________________________________________________
+(Pour récupérer l'enregistrement A de www dans votre zone ainsi que son RRSIG (la signature associée)) : 
+
+dig @localhost www.l2-3.ephec-ti.be A +dnssec
+
+; <<>> DiG 9.11.5-P4-5.1+deb10u10-Debian <<>> @localhost www.l2-3.ephec-ti.be A +dnssec
+; (2 servers found)
+;; global options: +cmd
+;; Got answer:
+;; ->>HEADER<<- opcode: QUERY, status: NOERROR, id: 45545
+;; flags: qr aa rd; QUERY: 1, ANSWER: 2, AUTHORITY: 0, ADDITIONAL: 1
+;; WARNING: recursion requested but not available
+
+;; OPT PSEUDOSECTION:
+; EDNS: version: 0, flags: do; udp: 1232
+; COOKIE: 7dba281d7da395870100000066185547a1fc1da9d0942315 (good)
+;; QUESTION SECTION:
+;www.l2-3.ephec-ti.be.          IN      A
+
+;; ANSWER SECTION:
+www.l2-3.ephec-ti.be.   3600    IN      A       54.37.12.55
+www.l2-3.ephec-ti.be.   3600    IN      RRSIG   A 13 4 3600 20240417071246 20240411193337 6553 l2-3.ephec-ti.be. rKQCKp/14CwUow8HiHFmHhX8+N/Q0jSMDdv11AQy1bTOMcBmKmLbV/Yz Kufa9a4s4pj7CX5f3WyobVnmG4KXTQ==
+
+;; Query time: 1 msec
+;; SERVER: ::1#53(::1)
+;; WHEN: Thu Apr 11 21:25:27 UTC 2024
+;; MSG SIZE  rcvd: 205
+
+
+- Récupérer le record DNSKEY___________________________________________________________________________________________________________________________________________________________________________________________
+Pour récupérer l'enregistrement DNSKEY, qui contient la clé publique de votre zone, exécuter :
+
+dig @localhost l2-3.ephec-ti.be DNSKEY
+
+; <<>> DiG 9.11.5-P4-5.1+deb10u10-Debian <<>> @localhost l2-3.ephec-ti.be DNSKEY
+; (2 servers found)
+;; global options: +cmd
+;; Got answer:
+;; ->>HEADER<<- opcode: QUERY, status: NOERROR, id: 56720
+;; flags: qr aa rd; QUERY: 1, ANSWER: 1, AUTHORITY: 0, ADDITIONAL: 1
+;; WARNING: recursion requested but not available
+
+;; OPT PSEUDOSECTION:
+; EDNS: version: 0, flags:; udp: 1232
+; COOKIE: ffcade012453356d010000006618568fca09d353a8825c71 (good)
+;; QUESTION SECTION:
+;l2-3.ephec-ti.be.              IN      DNSKEY
+
+;; ANSWER SECTION:
+l2-3.ephec-ti.be.       3600    IN      DNSKEY  257 3 13 PgOFWTN9+qqZTJsAT4x/1lJ5Rq9dx0XfXIlrtZWZ6KsBdYM4TZ7KYXfo XWchOqtA9gmWMrtQkH57r/LxZ6awNg==
+
+;; Query time: 1 msec
+;; SERVER: ::1#53(::1)
+;; WHEN: Thu Apr 11 21:30:55 UTC 2024
+;; MSG SIZE  rcvd: 153
+
+- 3. Vérifier la chaîne de confiance _________________________________________________________________________________________________________________________________________________________________________________________________________
+
+dig @8.8.8.8 l2-3.ephec-ti.be DS (no fonctionne pas car toujours pas accessible au grand public)
+
+
+de plus si vous n'avez pas configuré les records DS dans la zone parente ou si vous ne pouvez pas les ajouter 
+en raison de restrictions de votre fournisseur de domaine, 
+cette étape ne montrera pas les records DS attendu
+
+
+; <<>> DiG 9.11.5-P4-5.1+deb10u10-Debian <<>> @8.8.8.8 l2-3.ephec-ti.be DS
+; (1 server found)
+;; global options: +cmd
+;; Got answer:
+;; ->>HEADER<<- opcode: QUERY, status: NOERROR, id: 20285
+;; flags: qr rd ra ad; QUERY: 1, ANSWER: 0, AUTHORITY: 1, ADDITIONAL: 1
+
+;; OPT PSEUDOSECTION:
+; EDNS: version: 0, flags:; udp: 512
+;; QUESTION SECTION:
+;l2-3.ephec-ti.be.              IN      DS
+
+;; AUTHORITY SECTION:
+ephec-ti.be.            60      IN      SOA     dns110.ovh.net. tech.ovh.net. 2024040803 86400 3600 3600000 60
+
+;; Query time: 37 msec
+;; SERVER: 8.8.8.8#53(8.8.8.8)
+;; WHEN: Thu Apr 11 21:35:13 UTC 2024
+;; MSG SIZE  rcvd: 100
+
+
+
+-4 l'outil Delv _________________________________________________________________________________________________________________________________________________________________________________________________________
+
+delv @localhost www.l2-3.ephec-ti.be A +dnssec (marche ap car pas accès au public )
+
+
+
+2.4. Configurer un résolveur pour valider le DNSSEC _________________________________________________________________________________________________________________________________________________________________________________________________________
+
+
+Fournir des signatures DNSSEC dans les serveurs autoritaires est essentiel, mais si personne ne prend la peine de 
+les vérifier, le mécanisme n’apportera pas la sécurisation espérée.
+
+Si, ultérieurement, vous êtes amenés à mettre en place un résolveur DNS, pensez à le configurer de manière à ce 
+qu’il effectue de la validation DNSSEC. Notez que, dans ses versions les plus récentes, Bind9 active la validation 
+DNSSEC par défaut. De la sorte, lorsqu’il reçoit une réponse DNSSEC non valide lors d’une résolution, il répondra 
+au client par un message d’erreur “SERVFAIL” plutôt que de lui transmettre des informations DNS malicieuses.

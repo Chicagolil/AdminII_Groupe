@@ -1,0 +1,39 @@
+4.1 Démarrer un serveur web apache__________________________________________________________________________________________________________________________________________________________
+
+- Trouver une image apache sur le docker hub 
+    l'image d'apache est : httpd
+
+- Démarrer un container sur base de cette image et vérifiez qu'il fonctionne sur localhost via votre navigatuer 
+    docker run --name=mon-apache -p 80:80  httpd
+    docker exec -it mon-apache /bin/bash
+
+- Créer un second virtualhost sur le port 8080
+    on va créer un fichier de configuration pour la configuration des des VirtualHost 
+    on va directement faire la config dans le dockerfile pour éviter de dupliquer du travail pour riiiiiiieeeeeen
+    aller voir la config dans my-httpd.conf 
+
+- Personnalisez la page d'accueil des deux virtuals hosts
+     on juste créer index1.html et index2.html dans le répertoire 4.1  
+     on va directement faire la config dans le dockerfile pour éviter de dupliquer du travail pour riiiiiiieeeeeen
+
+- Créez un dockerfile permmettant d'obtenir une image avec la config apache personallisée 
+    aller voir la config dans Dockerfile
+    docker build -t mon_apache_personnalise .
+
+y a eu un problème avec le serveur à cause du fichier httpd.conf mais la logique est bonne 
+
+4.2 Lancer un résolveur Bind dans un conteneur Docker_______________________________________________________________________________________________________________________________________
+
+- flemme de fou de le faire 
+
+4.3 Container avec script Pyhton____________________________________________________________________________________________________________________________________________________________
+- Créer le Script Python dans show_time.py
+
+- Créer le Dockerfile dans Dockerfile 
+
+- Construire l'image Docker 
+    docker build -t python_programme .
+
+- Créer le container avec l'image 
+
+    docker run --rm python_programme 

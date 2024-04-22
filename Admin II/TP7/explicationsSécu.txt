@@ -1,0 +1,59 @@
+1. Analyse du Chiffrement TLS
+Le quoi ?
+TLS (Transport Layer Security) est comme un système de verrouillage sécurisé pour les communications 
+entre votre service de messagerie et les autres. Imaginez que vous envoyez une lettre sécurisée dans une boîte verrouillée; 
+seul le destinataire ayant la clé peut l'ouvrir.
+
+Le pourquoi ?
+Cela empêche les personnes non autorisées d'intercepter et de lire les e-mails lorsqu'ils sont 
+envoyés à travers Internet.
+
+Le comment ?
+Lorsque vous configurez votre serveur mail, vous activez TLS pour que tout le courrier sortant et 
+entrant utilise cette sécurité. Vous pouvez utiliser des outils comme Wireshark, un programme qui permet de 
+"voir" ce qui se passe sur le réseau, pour vérifier si les emails sont bien sécurisés par TLS.
+
+2. Authentification du Domaine
+Le quoi ?
+L'authentification du domaine consiste à utiliser plusieurs techniques pour prouver que les e-mails 
+proviennent réellement de votre domaine et non d'un imposteur.
+
+2.1 Record MX-PTR-A :
+MX indique quel serveur mail reçoit les emails pour votre domaine.
+PTR est un enregistrement de recherche inversée pour vérifier que l'adresse IP correspond au nom du serveur MX.
+A pointe un nom de domaine vers une adresse IP spécifique.
+
+Exemple :
+Si quelqu'un reçoit un email de "contact@mondomaine.com", il peut regarder ces enregistrements pour 
+vérifier que l'email vient vraiment de là.
+
+2.2 SPF (Sender Policy Framework) :
+C'est comme une liste d'invités pour une fête. Le record SPF dit qui est autorisé à envoyer des e-mails de votre domaine.
+
+Exemple :
+Si votre SPF indique que seul le serveur avec l'IP 123.45.67.89 peut envoyer des mails, 
+tout serveur essayant d'envoyer un mail de votre domaine avec une IP différente sera suspect.
+
+2.3 DKIM (DomainKeys Identified Mail) :
+DKIM ajoute une signature numérique à vos e-mails. C'est comme sceller une enveloppe avec de la 
+cire. Si la cire est brisée (la signature altérée), le destinataire saura que le message a été ouvert ou modifié.
+
+2.4 DMARC (Domain-based Message Authentication, Reporting & Conformance) :
+DMARC utilise SPF et DKIM pour donner des instructions sur ce qu'il faut faire si un email semble 
+suspect. C'est comme donner des instructions claires à la sécurité de votre bâtiment sur ce qu'il faut faire avec 
+les visiteurs qui semblent suspects.
+
+3. Filtrage du Spam
+Le quoi ?
+Le filtrage du spam est l'utilisation de divers outils pour identifier et bloquer les emails indésirables ou 
+malveillants avant qu'ils n'atteignent votre boîte de réception.
+
+Le comment ?
+SpamAssassin est un outil que vous pouvez activer pour analyser les emails entrants. 
+Il vérifie les emails contre une série de règles pour déterminer s'ils sont spam.
+
+Exemple :
+Supposons que vous receviez un email contenant le mot "loterie gratuite" plusieurs fois. 
+SpamAssassin peut examiner ce contenu et d'autres aspects de l'email, donner à l'email un score de spam, et si le score est trop élevé, il placera l'email dans votre dossier spam.
+
+En configurant chacun de ces éléments, vous aidez à garantir que les e-mails envoyés et reçus par votre domaine sont légitimes, sécurisés et exempts de contenu indésirable. Cela aide à protéger non seulement votre réputation mais aussi vos utilisateurs des menaces potentielles véhiculées par les emails.

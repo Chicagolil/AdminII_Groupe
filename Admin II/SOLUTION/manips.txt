@@ -1,0 +1,122 @@
+Comment faire pour que je puisse travailler de mon côté 
+
+je me crée un nouveau sous-domaine 
+
+je modifie le fichier de zone de léon pour que les requêtes qui pointes vers mon domaine soient 
+envoyées sur mon serveur 
+
+$ORIGIN l2-3.ephec-ti.be.
+$TTL 86400
+
+; Définition des enregistrements NS (Name Server)
+@       IN      SOA     ns.l2-3.ephec-ti.be mail.l2-3.ephec-ti.be. (
+                        2022031802 ; Serial
+                        14400       ; Refresh
+                        1800       ; Retry
+                        604800     ; Expire
+                        86400 )    ; Minimum TTL
+
+    IN      NS      ns.l2-3.ephec-ti.be.
+    IN      MX     10       mail.l2-3.ephec-ti.be.
+
+; Définition des enregistrements A (IPv4)
+ns    IN      A       54.37.13.182
+www    IN      A   54.37.13.182
+blog    IN    A    54.37.13.182
+mail   IN     A     54.37.13.182
+; Enregistrement TXT pour Let's Encrypt
+_acme-challenge   IN      TXT     G1VHzu1TpQiX6-6o8TkLbBfwn-8eXhoiGCHDt7pFQ6g
+
+; Délegation au serveur enfant
+lilian IN     NS      ns1.lilian.l2-3.ephec-ti.be.
+ns1.lilian    IN      A       54.37.12.55
+
+
+
+ensuite 
+docker stop dns 
+docker rm dns 
+docker rmi dns 
+
+docker build -t dns .
+
+docker run -d --name=dns -p 53:53/udp -p 53:53/tcp dns 
+dig @1.1.1.1 www.l2-3.ephec-ti.be
+
+
+et le mien je dois le modifier aussi 
+
+
+$ORIGIN lilian.l2-3.ephec-ti.be.
+$TTL 3600
+
+@       IN      SOA     ns1.lilian.l2-3.ephec-ti.be. admin.lilian.l2-3.ephec-ti.be. (
+                            2023040902 ; Serial
+                            7200       ; Refresh
+                            1200       ; Retry
+                            2419200    ; Expire
+                            3600       ; Negative Cache TTL
+)
+
+; Définition des serveurs de noms
+@       IN      NS      ns1.lilian.l2-3.ephec-ti.be.
+
+; Enregistrement MX pour le serveur de mail
+@       IN      MX      10 mail.lilian.l2-3.ephec-ti.be.
+
+; Enregistrements A pour les serveurs de noms
+ns1     IN      A       54.37.12.55
+
+
+; Enregistrements A supplémentaires
+www     IN      A       54.37.12.55
+mail    IN      A       54.37.12.55
+
+
+
+
+je vais aussi modifier le fichier named.conf et le nom de mon fichier de zone 
+
+
+options {
+  directory "/var/cache/bind";
+  // version statement for security to avoid hacking known weaknesses
+  // if the real version number is revealed
+  version "not currently available";
+  allow-query { any; };
+  allow-query-cache { none; };
+  recursion no;
+};
+
+zone "lilian.l2-3.ephec-ti.be." {
+  type master;
+  file "/etc/bind/lilian.l2-3.zone";
+  allow-transfer {
+    none;
+  };
+  inline-signing yes;
+  dnssec-policy default;
+};
+
+
+et mon Dockerfile aussi 
+
+
+FROM internetsystemsconsortium/bind9:9.18
+ADD ./named.conf /etc/bind/named.conf
+ADD lilian.l2-3.zone /etc/bind/lilian.l2-3.zone
+RUN chown -R bind:bind /etc/bind
+CMD ["/usr/sbin/named", "-g", "-c", "/etc/bind/named.conf", "-u", "bind"]
+
+docker stop dns 
+docker rm dns 
+docker rmi monserveurdns
+
+docker build -t monserveurdns .
+
+docker run -d --name=dns -p 53:53/udp -p 53:53/tcp monserveurdns 
+dig @1.1.1.1 www.lilian.l2-3.ephec-ti.be
+
+
+
+ssh -p 49152 moinsdedroit@54.37.13.182

@@ -1,0 +1,791 @@
+TP6 Sécurisation du serice Web public _____________________________________________________________________________________________
+
+Pour le moment on a un serveur web kool et tout maaaais il est pas sécurisé du tout 
+
+Il faut que je refasse l'infrastucture du TP5 pour pouvoir créer mon dockerCompose 
+correctement, je le sens ça va être in vraaaaie galère 
+
+L'arborescence est finie, quelques fichiers ont été modifés, bcp de fichiers ont été modifé mais 
+j'ai la flemme de lister tout les changements ici donc cheh
+
+petit détail qui me semble utile : 
+dans le dockerCompose la ligne 
+- ./db/sql:/docker-entrypoint-initdb.d
+qui concerne le script sql à éxecuter au moment du lancement de ce service 
+je me demandait si il y avait un impact à relancer le script plusieurs fois étant donné que la DB 
+existe déjà et que la table est déjà remplie 
+Alors il semblerait que si le conteneur de base de données a déjà été initialisé dans le passé 
+et que la base de données contient des données persistantes, alors les scripts dans docker-entrypoint-initdb.d 
+ne seront pas exécutés à nouveau lors des démarrages subséquents du conteneur. Cela est dû au 
+fait que MariaDB (ou MySQL) détecte la présence d'une base de données existante et ne réexécute 
+pas les scripts d'initialisation.
+
+Avant de lancer le dockerCompose je vais arrêter les services qui tournent sur les trois conteneurs existant et les supp pour éviter 
+les conflits de noms 
+
+
+docker stop mariadbtest
+docker rm mariadbtest
+
+docker stop nginx 
+docker rm nginx
+docker rmi mon-nginx
+
+docker stop php 
+docker rm php
+docker rmi monphpfpm
+
+
+docker-compose up -d
+
+ça marche pas hihi 
+j'ai un problème : 
+web  | 2024/04/21 14:20:31 [emerg] 1#1: host not found in upstream "php" in /etc/nginx/nginx.conf:15
+web  | nginx: [emerg] host not found in upstream "php" in /etc/nginx/nginx.conf:15
+web exited with code 1
+l'erreur dit que le serveur nginx a eu des problèmes et résolvant le nom d'hôte du service php et ducoup il s'est arrété 
+
+c'est normal parce que le service php s'arrête tout seul alors qu'il est censé rester actif , on le voit grâce à cette ligne
+
+
+j'avance petit à petit mais quest ce que c'est galère, j'ai réussi à faire tourner le conteneur php 
+mais maintenant c'est la base de données qui fait chier                                                                                                        
+
+jvais laisser ce soucis de base de données sur le tek pour le moment on y reviendra plus tard 
+ça fonctionne suffisamment bien 
+au final ça marche je sais pas coment pcq j'ai rien changé 
+
+le docker-compose ressemble à ça pour le moment
+
+services:
+  web:
+    build: .
+    image: web
+    container_name: web
+    hostname: web
+    depends_on:
+      - php
+    ports:
+      - 80:80
+    volumes:
+      - ./html:/var/www/html
+
+  php:
+    image: php:latest (c'est ici que j'ai réglé le problème, j'utilise une image que j'ai déjà construite au préalable plutôt que de la construire dans le docker-compose)
+    container_name: php
+    hostname: php
+    depends_on:
+      - db
+    environment:
+      MYSQL_DATABASE: ${DATABASE}
+      MYSQL_USER: ${PHP_USER}
+      MYSQL_PASSWORD: ${PHP_PASS}
+      MYSQL_HOST: ${PHP_HOST}
+    volumes:
+      - ./html:/var/www/html
+
+  db:
+    image: mariadb
+    container_name: db
+    hostname: db
+    environment:
+      MYSQL_ROOT_PASSWORD: ${ROOT_PASS}
+      MYSQL_DATABASE: ${DATABASE}
+      MYSQL_USER: ${USER_DB}
+      MYSQL_PASSWORD: ${USER_PASS}
+    volumes:
+      - ./db/sql:/docker-entrypoint-initdb.d
+
+on revient en détail dessus : 
+
+1. Service Web (web):
+
+build: . : Construit l'image Docker à partir du Dockerfile situé dans le répertoire courant.
+image: web : Nomme l'image construite "web".
+container_name: web : Nomme le conteneur "web".
+hostname: web : Définit le nom d'hôte du conteneur comme "web".
+depends_on: : Spécifie que ce service dépend du service php, ce qui signifie que php sera démarré avant web.
+ports: : Expose le port 80 du conteneur sur le port 80 de l'hôte, permettant l'accès HTTP au serveur web depuis l'extérieur.
+volumes: : Montre le répertoire local ./html dans le répertoire /var/www/html du conteneur, 
+permettant au serveur web d'accéder aux fichiers HTML et autres ressources web.
+
+
+2. Service PHP (php):
+
+image: php:latest :utilise mon image construite avec le dockerfile dans /php
+container_name: php : Nomme le conteneur "php".
+hostname: php : Définit le nom d'hôte du conteneur comme "php".
+depends_on: : Indique que ce service dépend du service db (base de données), donc db sera démarré avant php.
+environment: : Configure les variables d'environnement pour se connecter à la base de données MariaDB, y compris le 
+nom de la base de données, l'utilisateur, le mot de passe, et l'hôte (MYSQL_HOST sera probablement l'adresse IP ou le nom 
+du service db dans ce contexte Docker).
+volumes: : Montre le même répertoire que le service web pour permettre à PHP d'accéder aux scripts et autres fichiers nécessaires.
+
+
+3. Service de Base de Données (db):
+
+image: mariadb : Utilise l'image officielle de MariaDB pour la base de données.
+container_name: db : Nomme le conteneur "db".
+hostname: db : Définit le nom d'hôte du conteneur comme "db".
+environment: : Configure la base de données avec le mot de passe root, le nom de la base de données, l'utilisateur 
+de la base de données et son mot de passe.
+volumes: : Utilise le volume ./db/sql pour monter des scripts SQL qui seront exécutés au démarrage pour configurer 
+la base de données, par exemple, pour créer des tables ou insérer des données initiales.
+
+
+2. Sécurisation serveur ____________________________________________________________________________________________________________
+
+On va diminuer la surface d'attaque de notre serveur, c'est ce qu'on appelle le hardening 
+
+Comment qu'on va faire ça : 
+- mettre à jour régulèrement tous les logiciels et dépendances
+- supprimer les machins inutiles
+- s'assurer que seules les services nécessaires sont à l'écoute sur les ports TCP/UDP 
+- mettre en place des outils de protection tels que des firewall ou Fail2Ban. (DEJA FAIT) prout prout 
+
+STEP 1 sécuriser le vps : 
+on a eu un tp entier dessus, il est inviolable, c'est ciao les hackeurs de paquotilles 
+
+STEP 2 au niveau de la couche intermédiaire (Docker Engine): 
+utiliser une version à jour 
+docker version (c'est la 26.0.0 qui est la dernière dispo donc on est cool)
+
+STEP 3 pour les conteneurs : 
+
+éviter les tags latest sur les images qu'on utilise pour éviter le manque de stabilité en production, 
+ce qui est le cas pour mes images sauf pour celles qu'on crée avec des Dockerfile qui chopent par défaut ce tag là
+pour celles qui viennt d'internet ce sont pour la plupart des versions spécifiques d'images plus globales 
+
+vérfifier la viabilité des images qu'on choppe sur le net avec des outils comme Docker Security Scanning ou Clair
+
+publier les ports qu'en cas d'absolue nécéssité, ici seulement le serveur web doit être accessible depuis l'éxtérieur, le 
+reste doit posséder le super-pouvoir de l'invisibilité aux yeux du public, et moi jpeux le fournir ce super pouvoir, ce qui fait de moi 
+un DIEU, le DIEU des conteneurs 
+ 
+STEP 4 comprendre les config qu'on utilise : 
+ça c'est la meilleure, je comprends chaque millimètre de mes fichiers de config, pas trop le choix quand j'ai 45 problèmes à résoudre
+à chaque micro modif des services 
+
+STEP 5 le code est une faille: 
+au niveau du contenu, on peut subir des attaques par injection, mais on sort du cadre du cours d'admin donc nanananaaan 
+
+on peut utiliser des outils comme netstat, nmap, ou docker ps pour voir un peu tout ça 
+
+netstat -tulnp
+docker ps 
+nmap -p- 54.37.12.55 
+
+petite remarque sur ce qui est dit dans le cours, mais le port 80 n'est pas leeeee seul accessible depuis l'éxterieur, mais il y a 
+aussi le 53 pour le dns et mon port SECRET pour se connecter en ssh
+nmap le confirme  d'ailleurs 
+
+
+3 Sécurisation des Données ________________________________________________________________________________________________________________________________________________________________________
+
+Les Données c'est le petit protégé de la famille, c'est un des assets le plus important pour les entreprises, il faut absolument 
+protéger leur intégrité, leur disponibilité et leur confidentialité. Pour le moment on est un peu faiblard là dessus nous ^
+
+On a une base de données qui contient des données essentielles de l'entreprise mais qui n'a besoin d'être contactée que pour deux raisons 
+
+Le serveur php, pour les récuperer
+Et éventuellement pour de la maintenance par un admin 
+
+On va donc utiliser le principe du moindre privilège, en interdisant tout les autres moyens de connexions que c'est deux là  
+Comment qu'on fé : 
+- Empêcher l'accès réseau par d'autres containers par la ségrégation dans un subnet dédié, on est des gros raciste nous 
+- configurer la base de données pour que seulement certaines ip puissent s'y connecter 
+
+
+3.1 Isolation de la base de données ________________________________________________________________________________________________________________________________________________________________________
+
+Pour le moments les trois conteneurs sont dans le même sous réseau, càd que si le serveur web est compromis, un pirate à un accès
+direct à la DB, et ça c'est cacaboudin 
+Donc on peut séparer les 3 conteneur en 2 subnet différents 
+
+aller voir le schéma dans le cours il est bien foutu, 
+je pense que ils sont fait par la prof les schémas
+elle a un ptit coup de crayon
+
+pour les subnets il faut changer le docker-compose et rajouter deux réseaux et les lier au conteneurs 
+les deux nouveaux réseaux : 
+- api 
+- db 
+
+web appartient a api 
+db appartient a db 
+et php appartient aux deux (pour faire l'intermédiaire tu connais)
+
+on relancer l'ensemble 
+docker compose down 
+docker compose up -d 
+
+les sites fonctionnent encore ouf 
+on peut vérfifier l'isolation des conteneurs en faisant des ptits pingos la bien gras bien juteux 
+web peut ping php
+php peut ping web et db 
+web ne peut pas ping db 
+
+docker exec -it web /bin/bash 
+apt-get update
+apt-get install -y iputils-ping
+ping 192.168.64.2 (ça marche ap et c'est bien)
+ping 192.168.64.3 (ça marche ap et c'est bien)
+ping 192.168.80.2 ( ça marcher et c'est magnifiiiiiiiiiiiique )
+
+docker exec -it db /bin/bash 
+hostname -i (192.168.64.2)
+
+docker exec -it php /bin/bash 
+hostname -i (192.168.64.3) et (192.168.80.2) je pense que c'est normal qu'il ait deux ip puisque techniqument il a deux intérfaces réseau
+
+
+
+3.2 Configuration d'un utilisateur non privilégié ________________________________________________________________________________________________________________________________________________________________________
+
+on va configurer un ptit utilisateur pour notre petite db parce que pour l'instant on se connecte avec l'utilisateur root 
+qui lui a tous les droits sur la base de données, nous on veut juste un droit de lecture rien de plus 
+
+Comment qu'on fait ? 
+(db/sql/users.sql)
+STEP ONE créer un ptit fichier de config sql pour l'utilisateur en question dans un nouveau fichier : 
+
+CREATE USER 'wt-user'@'php%' IDENTIFIED BY 'wt-pwd';
+GRANT SELECT ON `woodytoys`.* TO 'wt-user'@'php%';
+
+elles font quoi ces deux jolies lignasse :  
+
+CREATE USER : crée un nouvel utilisateur, SANS DECONNER 
+'wt-user'@'php%' : nom de l'utilisateur 'wt-user' et 'php%' et l'hôte depuis le quel il peut se connecter, 
+    ça va permettre s’assurer que cet utilisateur ne peut effectuer de requêtes que depuis le container php.
+IDENTIFIED BY 'wt-pwd': c'est le mot de passe de cet utilisateur 
+
+GRANT : commande qui accorde des permissions à l'utilisateur
+SELECT : permet à l'utilisateur de lire les données dans la base de données 
+ON `woodytoys`.* : Spécifie sur quelles bases de données et tables les permissions sont accordées. woodytoys.* indique que 
+    l'utilisateur a la permission de lire toutes les tables (* signifie toutes) dans la base de données woodytoys.
+TO 'wt-user'@'php%' : Définit à qui les permissions sont accordées. Dans ce cas, elles sont accordées à l'utilisateur 
+    wt-user qui se connecte depuis des hôtes commençant par "php".
+
+!!!!!!!!!!!!!!!! ATTENTION / WARNING !!!!!!!!!!!!!!!!!! Bip Bip bop bop 
+
+pour pouvoir utiliser le nom du conteneur php, il faut autoriser la résolution de noms dans la config du conteneur 
+(db/conf/my-resolve.cnf)
+nveau fichier encore avec : 
+
+[mariadb]
+disable-skip-name-resolve=1
+
+
+tout ça ça veut dire changer de docker-compose et le relancer et prier les dieux de cette terre pour que ça marche 
+on rajoute cette ligne dans le volume du service db 
+      - ./db/conf/my-resolve.cnf:/etc/mysql/conf.d/my-resolve.cnf
+
+docker compose down 
+docker compose up -d 
+
+rien devrait changer mais c'est juste pour éviter des trops grosses modif, ça marche encore parfait 
+
+donc pour se connecter on va utiliser des variables d'environnement qui vont contenir les identifiants et les mot de passe 
+pour éviter de les afficher en clair dans les fichiers de configuration/contenu  
+
+on change dooonc products.php
+
+docker compose down 
+docker compose up -d 
+
+c'est reparti pour les prières, YYEEEEEEEEEEEEEEEEEEESSSSSSS ça marche 
+j'ai passé plus de temps sur ce vps ces 2 dernières semaines que au tél avec mon père c'est deux dernières
+années, rapport compliqué en même temps avec le rico
+
+Alors c'est pas mal ce qu'on a fait mais néanmoins c'est pas non plus le top étant donné que les paramètres
+d'authentification se retrouvent quand même en clair dans : 
+le fichier .env (même s'il est caché le bougre) et aussi 
+dans les instructions sql 
+
+suffit de faire docker inspect db pour retrouver ces informations croustillantes 
+
+on peut régler ça mais on va pas le faire 
+
+
+3.3 backup de la DB ________________________________________________________________________________________________________________________________________________________________________
+
+Si ces données se perdent on est dans la merde, littéralement une grosse flaque de chiasse humaine 
+SAUF si on backup les données 
+
+STEP ONE nouveau volume dans le docker compose : 
+./db:/var/lib/mysql 
+
+docker compose down 
+docker compose up -d 
+
+
+STEP TWO : on va exporter les données depuis le container vers un fichier chez moi, sur mon disque dur 
+AVEC CETTE COMMANDE : 
+
+docker exec db mariadb-dump --all-databases -uroot -p"$MYSQL_ROOT_PASSWORD"'  > /home/lilian/TP6/db/backup.sql 
+
+la commande là ne fonctionne pas jsp pq mais le volume que j'ai monté fonctionne, ce qui 
+explique pouquoi c'est le bordel dans mon fichier db 
+
+3.4. Logs de la DB ________________________________________________________________________________________________________________________________________________________________________
+
+on peut guetter les logs grâce à : 
+
+docker logs db -f 
+
+
+4. Sécurisation des communications avec HTTPS ____________________________________________________________________________________________________________
+Ohhh miam miam, c'est un gros morceau du tp ça mmmhhhh j'ai hâte de me le manger pleine tête 
+mais heureusement c'est le dernier 
+
+Alors c'est quoi https, ça fait quoi : 
+assurer la confidentialité des échanges de données entre client et serveur, 
+tout en garantissant l'authentication du serveur web auprès des clients 
+
+On va être validé par internet maggle, le boss des boss 
+aucune diff entre google et moi 
+
+On va pour ça configurer https et utiliser des certificats pour valider les clés publiques utilisées pour le chiffrement 
+
+4.1 HTTPS via un certificat auto-signé ________________________________________________________________________________________________________________________________________________________________________
+
+4.1.1 Génération du certificat auto-signé avec OpenSSL ________________________________________________________________________________________________________________________________________________________________________
+
+on va générer un certificat qu'on va signer nous même grâce à ma clé privée. 
+Cela permet de ne pas dépendre d'une autorité de certification 
+MAIS, les navigateurs ne considèrent pas ça comme sécurisé 
+Tout le monde peut le faire donc c'est bien normal
+même si le chiffrement est en place, rien ne garantit l'authenticité du serveur 
+
+STEP ONE Créer une paire de clés cryptographique 
+STEP TWO Générer une demande de certificat (format CSR - Certificate Signing Request) : 
+on peut faire ces deux étapes en une seule demande 
+
+sudo openssl req -nodes -newkey rsa:4096 -keyout certificate/nginx-selfsigned.key -out certificate/nginx-selfsigned.csr 
+
+(jlai fait avec l'utilisateur Debian)
+
+
+que fait cette commande : 
+
+openssl: Appelle l'outil OpenSSL, utilisé pour la cryptographie.
+
+req: Cette sous-commande de OpenSSL est utilisée pour créer des demandes 
+de signature de certificat (Certificate Signing Requests, CSR) et des certificats.
+
+-nodes (no DES): Indique que la clé privée ne doit pas être chiffrée avec une phrase secrète. 
+Cela signifie que la clé privée sera stockée en texte clair, ce qui peut présenter des risques 
+de sécurité si elle n'est pas gérée avec prudence
+
+-newkey rsa:4096: Crée une nouvelle paire de clés (publique et privée). 
+rsa:4096 indique que l'algorithme utilisé est RSA, avec une clé de 4096 bits, 
+ce qui est une bonne taille pour la sécurité
+
+-keyout certificate/nginx-selfsigned.key: Spécifie le chemin et le nom du fichier 
+où la clé privée sera enregistrée. Dans ce cas, il s'agit de certificate/nginx-selfsigned.key
+
+-out certificate/nginx-selfsigned.csr: Spécifie le chemin et le nom du fichier où la CSR générée sera enregistrée. 
+Ici, elle est enregistrée en tant que certificate/nginx-selfsigned.csr
+
+Comment tout ça fonctionne : 
+
+
+Création de la clé privée: La commande génère une clé privée RSA de 4096 bits. 
+La clé privée est utilisée pour décrypter les données qui ont été chiffrées avec la clé publique correspondante.
+
+Génération du CSR: Le CSR est un fichier qui contient ma clé publique et d'autres informations 
+(telles que le nom de l'organisation, le nom commun (domaine), la localité, etc.) qui sont signées avec ma clé privée. 
+En temps normal on soumets  le CSR à une autorité de certification pour obtenir un certificat SSL/TLS, 
+mais dans ce cas, on va utiliser ce CSR pour créer un certificat auto-signé.
+
+
+Cette commande est typiquement utilisée dans les scénarios où on souhaite sécuriser les communications vers et depuis un serveur web
+mais sans l'intention d'acheter un certificat d'une autorité de certification 
+Le certificat auto-signé peut être utile pour les tests ou les environnements de développement, 
+mais il générera des avertissements de sécurité dans les navigateurs car il n'est pas signé par une CA reconnue.
+
+On peut visualiser ces clés et certificats avec 
+
+sudo openssl rsa -noout -text -in certificate/nginx-selfsigned.key
+sudo openssl req -noout -text -in certificate/nginx-selfsigned.csr
+
+c'est pas mal de charabia en hexadécimal pcq c'est crypté j'imagine
+
+on va mtn auto-signer le contrat avec cette commande : 
+
+
+sudo openssl x509 -signkey certificate/nginx-selfsigned.key -in certificate/nginx-selfsigned.csr -req -days 365 -out certificate/nginx-selfsigned.crt
+
+openssl x509: Utilise le module x509 d'OpenSSL, qui est conçu pour gérer les certificats X.509 (le standard des certificats publics
+utilisés dans SSL et TLS).
+
+-signkey certificate/nginx-selfsigned.key: Spécifie la clé privée qui sera utilisée pour signer le certificat. 
+Ici, certificate/nginx-selfsigned.key est le chemin vers ma clé privée
+
+-in certificate/nginx-selfsigned.csr: Indique le fichier CSR (Certificate Signing Request) qui contient ma demande de signature de certificat. 
+Cela inclut des informations publiques sur votre certificat telles que votre nom de domaine, organisation, etc.
+
+req: Indique que la commande doit traiter une demande de certificat.
+
+-days 365: Définit la validité du certificat à 365 jours. Après cette période, le certificat expirera et devra être renouvelé.
+
+-out certificate/nginx-selfsigned.crt: Spécifie le chemin du fichier où le certificat signé sera enregistré. Dans ce cas, 
+le certificat sera sauvegardé en tant que certificate/nginx-selfsigned.crt.
+
+Cette commande crée un certificat auto-signé basé sur la demande de certificat fournie. Un certificat auto-signé est un 
+ertificat qui n'est pas signé par une autorité de certification (CA) externe, mais plutôt par sa propre clé privée correspondante. 
+
+
+on peut ensuite visualiser le certificat signé obtenu avec : 
+
+openssl x509 -noout -text -in certificate/nginx-selfsigned.crt
+
+On peut constater qu’il est effectivement auto-signé, puisque le champ “Issuer” est identique au champ “subject”.
+
+Et si on essaye de se connecter au site en https mtn, ça fonctionne ?? 
+NEIN NEIN NEIN NEIN NEIN, le serveur nginx n'a aucune idée qu'on a les certificat signé tout ça et en plus le port 443 n'est même pas 
+ouvert, c'est la cata de chez cata 
+Va falloir configurer Nginx et modifier un tout mini peu le docker compose pour que ça fonctionne 
+
+4.1.2 Configuration de Nginx en HTTPS pour le virtualhost www _____________________________________________________________________________________________
+on doit faire ces 3 étapes deux fois, pour www et pour blog 
+
+STEP ONE rediriger tout le traffic du port 80 vers le port 443 : 
+server { 
+listen 80; 
+server_name www.lilian.l2-3.ephec-ti.be.; 
+return 301 https://$host$request_uri; 
+}
+
+STEP TWO On définit une seconde configuration pour le virtualhost, cette fois sur le port 443 :
+
+server { 
+listen 443 ssl; 
+server_name www.lilian.l2-3.ephec-ti.be.; 
+... 
+}
+
+STEP THREE on indique l’emplacement de la clé privée et du certificat 
+
+ssl_certificate /etc/ssl/certs/nginx-selfsigned.crt;
+ssl_certificate_key /etc/ssl/private/nginx-selfsigned.key;
+
+
+
+
+on doit aussi modifier le docker compose pour ouvrir le port 443 sur le conteneur web 
+et monter les certificats + clé dans les bons dossier : 
+
+      - ../certificate/nginx-selfsigned.crt:/etc/ssl/certs/nginx-selfsigned.crt
+      - ../certificate/nginx-selfsigned.key:/etc/ssl/private/nginx-selfsigned.key
+
+docker compose down 
+docker compose up -d 
+
+première chose avant de tester, on va voir si les fichiers sont bien modifiés 
+c'est bon 
+
+et mtn on teste, et ça marche maggle 
+par contre oui c'est vrai y a un avertissement bien vnr du navigateur, WALLLLAH jsuis pas un hackeur
+jsuis un gentil garçon 
+
+4.2 Obtention automatique d'un certificat Let's Encrypt pour www ____________________________________________________________________________________________________________
+on touche à la fin de ce tp, mais il est deux heures du mat alors que j'ai commencé à 13h30 
+zéro vanne j'ai quasi pas fait de pauses, jpense que jsuis méga lent 
+donc jvais dodo et je terminerai demain matin 
+
+Rebonjour, il est 8h30, ce qui me fait un bon 5 heures de sommeil cette nuit, pas besoin de plus 
+si ce n'est que mes yeux se ferment tout seul, bizarre 
+ça ira surement mieux après un café, ou deux, ou trois 
+
+Lets go 
+
+La communication vers le site est sécrisée mais le certificat est pas considéré comme fiable par les 
+navigateurs 
+On va corriger ça en faisant signer le certificat pas par ma clé privée mais par un CA, càd une 
+autorité reconnue 
+Ce CA permet l'Obtention et le renouvelement automatisé d'un certificat signé grâce au protcole ACME 
+et l'outil certbot 
+
+On va utiliser certbot direment sur le conteneur nginx. Une altenative aurait été d'utiliser le 
+conteneur docker certbot, mais ce n'est pas la procédure recomandée 
+
+Que-ce-qu'il va faire cet outil : 
+
+- Générer les clés publique et privée
+
+- Générer la demande de certificat et l’envoyer au CA
+
+- Récupérer une liste de challenges (voir : https://letsencrypt.org/docs/challenge-types/) contenant un token unique
+
+- Répondre à un de ces challenges afin de prouver la légitimité sur le certificat. Ce challenge consiste en général à publier 
+le token fourni par l’autorité de certification sur une URL données du serveur web (challenge http-01), 
+ou à insérer un record TXT contenant ce token dans la zone DNS (challenge dns-01)
+
+- Une fois le challenge rempli, récupérer le certificat signé et modifier la configuration 
+nginxpour que ce dernier en tienne compte.
+
+C'est parti 
+STEP ONE Installer certbot et le module nginx : apt install certbot python3-certbot-nginx : (sur le vps et sur le conteneur)
+apt update
+sudo apt install python3-certbot-nginx -y 
+
+STEP TWO obtenir les certificats (dans le conteneur)
+
+certbot --nginx -d www.lilian.l2-3.ephec-ti.be.
+
+voici le retour de cette commande : 
+
+Account registered.
+Requesting a certificate for www.lilian.l2-3.ephec-ti.be
+
+Successfully received certificate.
+Certificate is saved at: /etc/letsencrypt/live/www.lilian.l2-3.ephec-ti.be/fullchain.pem
+Key is saved at:         /etc/letsencrypt/live/www.lilian.l2-3.ephec-ti.be/privkey.pem
+This certificate expires on 2024-07-21.
+These files will be updated when the certificate renews.
+Certbot has set up a scheduled task to automatically renew this certificate in the background.
+
+Deploying certificate
+Successfully deployed certificate for www.lilian.l2-3.ephec-ti.be to /etc/nginx/nginx.conf
+Congratulations! You have successfully enabled HTTPS on https://www.lilian.l2-3.ephec-ti.be
+
+STEP THREE Examinez les logs dans le fichier /var/log/letsencrypt/letsencrypt.log : (le fichier est nrv)
+
+  - Trouvez les trois challenges ACME proposés par let’s encrypt, et le token utilisé :
+
+Challenges ACME Proposés :
+
+HTTP-01 Challenge
+Type : http-01
+Status : pending
+URL : https://acme-v02.api.letsencrypt.org/acme/chall-v3/341549160887/HHpz0A
+Token : UrqHOaXtf0e0PZOZX4la8Xw3UCqjhmSAxMnEbcRhuuw
+
+DNS-01 Challenge
+Type : dns-01
+Status : pending
+URL : https://acme-v02.api.letsencrypt.org/acme/chall-v3/341549160887/-TtFQw
+Token : UrqHOaXtf0e0PZOZX4la8Xw3UCqjhmSAxMnEbcRhuuw
+
+
+TLS-ALPN-01 Challenge
+Type : tls-alpn-01
+Status : pending
+URL : https://acme-v02.api.letsencrypt.org/acme/chall-v3/341549160887/gbXtQA
+Token : UrqHOaXtf0e0PZOZX4la8Xw3UCqjhmSAxMnEbcRhuuw
+
+Token Utilisé :
+Token Commun : UrqHOaXtf0e0PZOZX4la8Xw3UCqjhmSAxMnEbcRhuuw
+
+
+Ce token est utilisé pour valider la propriété du domaine en répondant au défi spécifié par Let’s Encrypt. 
+En cas de challenge HTTP-01, par exemple, ce token doit être accessible à une URL bien précise sous le domaine vérifié, 
+permettant ainsi à Let's Encrypt de confirmer que le requérant contrôle bien le domaine en question.
+
+
+  - Trouvez la configuration nginx temporaire utilisée par certbot pour répondre au challenge : 
+
+server {
+    rewrite ^(/.well-known/acme-challenge/.*) $1 break; # managed by Certbot
+
+    listen 80;
+    server_name  www.lilian.l2-3.ephec-ti.be;
+    return 301 https://$host$request_uri;
+    location = /.well-known/acme-challenge/UrqHOaXtf0e0PZOZX4la8Xw3UCqjhmSAxMnEbcRhuuw {
+        default_type text/plain;
+        return 200 UrqHOaXtf0e0PZOZX4la8Xw3UCqjhmSAxMnEbcRhuuw.2oJxysciOiWrZm15HtmBU2Zs2me848X_bedypXr9xzQ;
+    } # managed by Certbot
+}
+
+Server Block : Un bloc serveur spécifique est configuré pour écouter sur le port 80 (HTTP) pour le domaine www.lilian.l2-3.ephec-ti.be.
+
+Rewrite Rule : Cette règle est utilisée pour intercepter les requêtes vers les chemins commençant par /.well-known/acme-challenge/ 
+et les réécrire sans changer le chemin. Cette règle est gérée par Certbot et s'assure que les requêtes pour les défis ACME sont 
+traitées correctement.
+
+Location Block : Un bloc de location spécifique pour le token UrqHOaXtf0e0PZOZX4la8Xw3UCqjhmSAxMnEbcRhuuw est configuré pour 
+retourner directement la réponse attendue par Let's Encrypt pour prouver le contrôle du domaine. Cette réponse inclut le token 
+suivi d'une chaîne générée par Certbot, nécessaire pour la validation.
+
+Cette configuration est temporaire et est utilisée seulement durant le processus de vérification de Let's Encrypt 
+pour obtenir le certificat. Une fois le certificat obtenu et installé, Certbot nettoie ces modifications.
+
+  - Quelle est l’URL où se trouve le token sur votre serveur nginx?
+
+http://www.lilian.l2-3.ephec-ti.be/.well-known/acme-challenge/UrqHOaXtf0e0PZOZX4la8Xw3UCqjhmSAxMnEbcRhuuw
+
+Cette URL est utilisée par Let's Encrypt pour vérifier la propriété du domaine dans le cadre du challenge HTTP-01. 
+Let's Encrypt effectue une requête HTTP à cette URL et s'attend à recevoir en réponse le token associé, 
+ce qui prouve que le demandeur contrôle effectivement le domaine en question.
+
+
+  - Voyez-vous le certificat reçu? De combien de parties se compose-t-il?
+
+Oui, le certificat reçu par Let's Encrypt est bien visible dans les logs de Certbot. Le certificat se compose de deux parties principales :
+
+Le certificat du domaine - C'est le certificat spécifiquement émis pour mon domaine 
+(www.lilian.l2-3.ephec-ti.be). Ce certificat contient toutes les informations nécessaires, 
+y compris la clé publique associée à mon domaine.
+
+Le certificat intermédiaire - Ce certificat sert de chaînon de confiance entre le certificat de votre domaine et 
+la racine de Let's Encrypt. Il aide les navigateurs et les clients à valider l'authenticité de mon certificat de 
+domaine en établissant une chaîne de confiance jusqu'à une autorité de certification racine connue et de confiance.
+
+Ces deux certificats forment une chaîne qui est nécessaire pour que les navigateurs reconnaissent la 
+validité du certificat sans afficher d'avertissements de sécurité.
+
+  - Où sont stockés les fichiers du certificat et de la clé privée générées par certbot?
+
+dans le répertoire /etc/letsencrypt/live/, voici les emplacements :
+
+Certificat (fullchain.pem) : Ce fichier contient le certificat de mon domaine ainsi que le certificat 
+intermédiaire. Il est stocké à l'adresse /etc/letsencrypt/live/www.lilian.l2-3.ephec-ti.be/fullchain.pem.
+
+Clé privée (privkey.pem) : Ce fichier contient la clé privée utilisée pour le chiffrement SSL/TLS de mon 
+site. Il est stocké à l'adresse /etc/letsencrypt/live/www.lilian.l2-3.ephec-ti.be/privkey.pem.
+
+
+
+  - Vérifiez votre configuration nginx: qu’est ce qui a changé?
+
+Ajout des directives SSL : Les chemins vers le certificat SSL (fullchain.pem) et la clé privée 
+(privkey.pem) ont été ajoutés à la configuration de votre serveur Nginx. Ces lignes spécifient 
+l'emplacement du certificat et de la clé privée que Nginx doit utiliser pour établir des connexions 
+HTTPS sécurisées.
+
+
+  - Vérifiez is votre site web possède à présent un certificat signé par Let’s Encrypt 
+  et s’il est accepté par votre navigateur
+
+Sur google chrome
+c'est bizarre, je vois que le certificat est valide est que celui qui est utilisé par 
+https://www.lilian.l2-3.ephec-ti.be/ est bien celui de lets encrypt mais j'ai toujours un avertissement
+
+HAAA par cooontre sur microsoft edge, pas d'avertissement pour 
+https://www.lilian.l2-3.ephec-ti.be/
+mais par contre big avertissment pour 
+https://blog.lilian.l2-3.ephec-ti.be/
+
+  - Examinez le certificat reçu avec l’outil OpenSSL, 
+  et identifiez les champs indiquant la signature du CA.
+
+openssl x509 -in /etc/letsencrypt/live/www.lilian.l2-3.ephec-ti.be/fullchain.pem -text -noout
+
+Issuer: Ce champ indique l'autorité de certification qui a émis le certificat. Pour Let's Encrypt, cela 
+ressemble à ça : C = US, O = Let's Encrypt, CN = R3.
+
+Signature Algorithm: Ce champ décrit l'algorithme de cryptographie utilisé pour signer le certificat.
+sha256WithRSAEncryption
+
+On peut aussi voir ces infos sur google chrome 
+
+
+- Vérifiez également le statut HTTPS du second Virtual Host : 
+blog.lilian.l2-3.ephec-ti.be. Que se passe-t-il? Comment pouvez-vous corriger ça ?
+
+on peut faire ce qu'on vient de faire mais cette fois ci juste en changeant l'url 
+
+mais on va pas le faire, on va le faire manuellement pour l'ensemble du domaine dans l'étape suivante 
+donc on va s'arrêter pour cette étape et relancer le docker compose pour vanish ces modifications 
+pcq elles n'étaient pas persistées 
+
+4.3 Obtention manuelle d'un certificat pour le domaine _____________________________________________________________________________________________
+
+on a vu comment obtenir un certificat pour un domaine spécifique, ou plusieurs domaines. 
+dans certains cas c'est intéréssant d'obtenir un certicat pour l'ensemble d'un domaine, 
+ça pourrait être cool oui en effet 
+On aimerait avoir un certificat qui couvrerait *.lilian.l2-3.ephec-ti.be
+on appelle ce certicat un certificat wildcard 
+
+pour ce certificat il faudra utiliser/résoudre le challenge DNS, il faut prouver qu'on a bien le contrôle
+sur le domaine 
+il faudra donc rajouter un record dans le fichier de zone 
+
+
+L’outil certbotpeut à nouveau nous aider, cette fois en mode manuel : il s’occupera d’aller récupérer 
+le certificat une fois le challenge réussi, mais ne changera pas la configuration nginx.
+
+STEP ONE Obtenez votre certificat wildcard en exécutant la commandesuivante sur votre container nginx : 
+ 
+certbot certonly --manual --preferred-challenges=dns --email he202305@students.ephec.be --agree-tos -d \*.lilian.l2-3.ephec-ti.be.
+
+Please deploy a DNS TXT record under the name:
+
+_acme-challenge.lilian.l2-3.ephec-ti.be.
+
+with the following value:
+
+8oOUQXPqsKbnNbp_y0-WjjDf1t6TcAxsZRHV5yYP30U
+
+Before continuing, verify the TXT record has been deployed. Depending on the DNS
+provider, this may take some time, from a few seconds to multiple minutes. You can
+check if it has finished deploying with aid of online tools, such as the Google
+Admin Toolbox: https://toolbox.googleapps.com/apps/dig/#TXT/_acme-challenge.lilian.l2-3.ephec-ti.be.
+Look for one or more bolded line(s) below the line ';ANSWER'. It should show the
+value(s) you've just added.
+
+mert en copiant ça j'ai interrompu le processus, jspr que j'ai pas tout cassé
+
+on recommence 
+
+c'est le même token, on va aller foutre ça dans le cul du dns 
+
+on rédemmarre tout ça 
+
+docker stop dns 
+docker rm dns 
+docker rmi monserveurdns
+
+docker build -t monserveurdns .
+
+docker run -d --name=dns -p 53:53/udp -p 53:53/tcp monserveurdns 
+dig @1.1.1.1 www.lilian.l2-3.ephec-ti.be
+
+on vérifie la disponibilité du record texte avec : 
+dig @ns1.lilian.l2-3.ephec-ti.be _acme-challenge.lilian.l2-3.ephec-ti.be TXT
+
+
+normalement on peut continuer avec certbot 
+
+
+Successfully received certificate.
+Certificate is saved at: /etc/letsencrypt/live/lilian.l2-3.ephec-ti.be/fullchain.pem
+Key is saved at:         /etc/letsencrypt/live/lilian.l2-3.ephec-ti.be/privkey.pem
+This certificate expires on 2024-07-21.
+These files will be updated when the certificate renews.
+
+on change la config nginx pour avoir ces certificats en config globale 
+ssl_certificate  /etc/letsencrypt/live/lilian.l2-3.ephec-ti.be/fullchain.pem ;
+ssl_certificate_key /etc/letsencrypt/live/lilian.l2-3.ephec-ti.be/privkey.pem ;
+
+
+on ajoute un volume au docker compose pour persister ces clés 
+- ../zone/:/etc/letsencrypt/
+
+docker compose down 
+docker rmi web 
+docker compose up -d 
+
+
+https://www.lilian.l2-3.ephec-ti.be/
+https://www.lilian.l2-3.ephec-ti.be/products.php
+https://blog.lilian.l2-3.ephec-ti.be/
+
+ça marche et il n'y a plus d'avertissement bababoy bababoy 
+
+4.4 Révocation de certificat ____________________________________________________________________________________________________________
+ 
+que faire quand des changements entraînent la modification d'informations sur le certificat, ou 
+lorsque la clé est compromise 
+Il faut le signaler au CA, on parle alors de révocation de certificat, et le CA l'ajoute alors 
+à sa liste de certificats revoqués (CRL)
+
+avec certbot c facil de faire ça avec : 
+
+certbot revoke --cert-name example.com --reason keycompromise
+
+mais nous on en aura pas besoin pcq le vps et ses conteneurs sont sécurisés comme du béton armé 
+
+C'est la fin du tp, j'ai atteint un pas de plus qui mène au bonheur 
+

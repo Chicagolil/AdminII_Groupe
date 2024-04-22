@@ -1,0 +1,97 @@
+TP7 : Sécurisation du service mail ________________________________________________________________________________________________________
+
+obj tp : 
+- Comprendre les paramètres principaux de la configuration du service mail 
+- Expliquer et mettre en oeuvre du chiffrement dans les mails 
+- Expliquez et mettre en oeuvre l’authentification du service mail (Reverse DNS, SPF, DKIM et DMARC)
+- Expliquez et mettre en oeuvre du filtrage de spam
+
+En principe il y aura peu de configuration à réaliser. Plusieures étapes indépendantes 
+dans la partie Sécurisation
+
+1.Mise en place du service mail maggle_______________________________________________________________________________________________________
+
+l'image docker que l'on va utiliser est : docker-mail-server 
+
+1.1 configuration au niveau du dns___________________________________________________________________________________________________________
+
+première étape, rajouter un resource record de type MX dans le fichier de zone 
+et aussi un record A pour la machine qui héberge los servos mailos 
+surtout ne pas oublier d'incrémenter le n° du fichier de zone 
+lets go : 
+
+- Enregistrement MX pour le serveur de mail
+@       IN      MX      10 mail.lilian.l2-3.ephec-ti.be.
+
+- l'Enregistrement A record existait déjà dans l'ancien fichier de zone
+
+mail    IN      A       54.37.12.55
+
+- Configurer le Resource Record PTR du VPS 
+
+pour ça, je devrai envoyer un mail à van den schriek mais ça ne sert à rien puisque mon dns n'est pas déployé
+je laisse le plaisir à léon de le faire 
+
+
+Je fais les modifs dans le fichier l2-3.zone dans le répertoire TP4 
+du user lilian 
+
+Et après je reconstruit une nouvelle image 
+
+docker stop dns 
+docker rm dns 
+docker rmi monserveur dns 
+
+docker build -t monserveurdns . 
+docker run -d --name=dns -p 53:53/udp -p 53:53/tcp monserveurdns 
+docker restart dns
+
+dig @localhost mail.lilian.l2-3.ephec-ti.be
+
+
+1.2 Récupération des fichiers du serveur mail ________________________________________________________________________________________________________
+
+Avant de lancer le conteneur, on doit récuperer des dossiers grâce 
+à ces commandes :
+
+# Définir l'URL de base du dépôt GitHub
+DMS_GITHUB_URL="https://raw.githubusercontent.com/docker-mailserver/docker-mailserver/master"
+
+# Télécharger le fichier docker-compose
+wget "${DMS_GITHUB_URL}/compose.yaml"
+
+# Télécharger le fichier d'environnement pour la configuration
+wget "${DMS_GITHUB_URL}/mailserver.env"
+
+On va devoir modifier un peu les deux fichiers qu'on a importé, 
+en commancant par compose.yaml 
+
+mofifier le hostname pour avoir : 
+
+hostname : mail.lilian.l2-3.ephec-ti.be
+
+
+maintenant le mailserver.env : 
+SSL_TYPE=letsencrypt
+
+
+1.3 Certificats TLS ________________________________________________________________________________________________________
+
+sudo apt update 
+sudo apt install certbot 
+
+sudo certbot certonly --standalone -d mail.lilian.l2-3.ephec-ti.be
+
+il y a un problème ici, cette commande nécessite un dns fonctionnel, 
+il y en a un qui fonctionne mais c'est celui de léon 
+faut absolument que je trouve une solution pour pouvoir continuer à travailler
+
+
+Un certificat TLS permet de sécuriser les connexions entre votre serveur 
+de messagerie et les clients de messagerie (ou d'autres serveurs de 
+messagerie). Cela garantit que toutes les données, y compris les mots de
+passe et les contenus des emails, sont chiffrées pendant leur transit. 
+Sans TLS, ces données seraient transmises en clair, 
+rendant votre serveur vulnérable aux écoutes et autres attaques.
+
+1.4 Démarrage et test du serveur _____________________________________________________________________________________________
